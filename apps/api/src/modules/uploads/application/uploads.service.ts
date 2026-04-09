@@ -39,6 +39,28 @@ function toSlug(input: string): string {
     .replace(/-+/g, '-');
 }
 
+function formatRowError(err: unknown): string {
+  if (err instanceof BadRequestException) {
+    const response = err.getResponse();
+    if (typeof response === 'string') return response;
+    if (response && typeof response === 'object' && 'message' in response) {
+      const message = (response as { message?: string | string[] }).message;
+      if (Array.isArray(message)) return message.join('; ');
+      if (typeof message === 'string') return message;
+    }
+    return 'Falha de validacao.';
+  }
+
+  if (err instanceof Error) {
+    if (/Unique constraint failed/i.test(err.message)) {
+      return 'Conflito de dados unicos (nome, slug ou e-mail).';
+    }
+    return err.message;
+  }
+
+  return 'Erro inesperado ao processar linha.';
+}
+
 @Injectable()
 export class UploadsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -63,68 +85,73 @@ export class UploadsService {
     };
 
     for (const [idx, raw] of rows.entries()) {
-      const nome = String(raw.nome ?? '').trim();
-      const email = String(raw.email ?? '').trim();
-      const grupoNome = String(raw.grupo ?? '').trim();
+      try {
+        const nome = String(raw.nome ?? '').trim();
+        const email = String(raw.email ?? '').trim();
+        const grupoNome = String(raw.grupo ?? '').trim();
 
-      if (!nome || !email || !grupoNome) {
-        result.errors.push(`Linha ${idx + 2}: colunas obrigatorias nome, email e grupo.`);
-        result.skipped += 1;
-        continue;
-      }
-
-      const grupo = await this.prisma.grupo.findFirst({
-        where: { nome: { equals: grupoNome, mode: 'insensitive' } },
-      });
-      if (!grupo) {
-        result.errors.push(`Linha ${idx + 2}: grupo inexistente (${grupoNome}).`);
-        result.skipped += 1;
-        continue;
-      }
-
-      const nomeExibivel = toTitleCaseName(nome);
-      const nomeCanonico = toCanonical(nomeExibivel);
-      const existing = await this.prisma.credor.findFirst({ where: { nomeCanonico } });
-
-      if (!existing) {
-        let slug = toSlug(nomeExibivel);
-        if (!slug) {
-          result.errors.push(`Linha ${idx + 2}: nome invalido para slug.`);
+        if (!nome || !email || !grupoNome) {
+          result.errors.push(`Linha ${idx + 2}: colunas obrigatorias nome, email e grupo.`);
           result.skipped += 1;
           continue;
         }
 
-        const slugExists = await this.prisma.credor.findUnique({ where: { slug } });
-        if (slugExists) {
-          slug = `${slug}-${Math.floor(Math.random() * 10000)}`;
+        const grupo = await this.prisma.grupo.findFirst({
+          where: { nome: { equals: grupoNome, mode: 'insensitive' } },
+        });
+        if (!grupo) {
+          result.errors.push(`Linha ${idx + 2}: grupo inexistente (${grupoNome}).`);
+          result.skipped += 1;
+          continue;
         }
 
-        await this.prisma.credor.create({
+        const nomeExibivel = toTitleCaseName(nome);
+        const nomeCanonico = toCanonical(nomeExibivel);
+        const existing = await this.prisma.credor.findFirst({ where: { nomeCanonico } });
+
+        if (!existing) {
+          let slug = toSlug(nomeExibivel);
+          if (!slug) {
+            result.errors.push(`Linha ${idx + 2}: nome invalido para slug.`);
+            result.skipped += 1;
+            continue;
+          }
+
+          const slugExists = await this.prisma.credor.findUnique({ where: { slug } });
+          if (slugExists) {
+            slug = `${slug}-${Math.floor(Math.random() * 10000)}`;
+          }
+
+          await this.prisma.credor.create({
+            data: {
+              slug,
+              nomeExibivel,
+              nomeCanonico,
+              email,
+              grupoId: grupo.id,
+            },
+          });
+          result.created += 1;
+          continue;
+        }
+
+        if (existing.protegidoEmail && !allowProtectedUpdate) {
+          result.skipped += 1;
+          continue;
+        }
+
+        await this.prisma.credor.update({
+          where: { id: existing.id },
           data: {
-            slug,
-            nomeExibivel,
-            nomeCanonico,
             email,
             grupoId: grupo.id,
           },
         });
-        result.created += 1;
-        continue;
-      }
-
-      if (existing.protegidoEmail && !allowProtectedUpdate) {
+        result.updated += 1;
+      } catch (err) {
+        result.errors.push(`Linha ${idx + 2}: ${formatRowError(err)}`);
         result.skipped += 1;
-        continue;
       }
-
-      await this.prisma.credor.update({
-        where: { id: existing.id },
-        data: {
-          email,
-          grupoId: grupo.id,
-        },
-      });
-      result.updated += 1;
     }
 
     return result;
