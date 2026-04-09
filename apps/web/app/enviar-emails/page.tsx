@@ -3,11 +3,13 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { DashboardShell } from '../components/dashboard-shell';
 import {
+  EmailSendProgress,
   EmailSendResult,
-  enviarEmails,
+  getEnvioEmailsProgresso,
   getDashboardEnvio,
   getEmailReport,
   getEmailTemplate,
+  iniciarEnvioEmails,
   listCredores,
   listGrupos,
   updateEmailTemplate,
@@ -30,6 +32,10 @@ export default function EnviarEmailsPage() {
   const [textoDescontos, setTextoDescontos] = useState('');
   const [report, setReport] = useState<any[]>([]);
   const [lastSend, setLastSend] = useState<EmailSendResult | null>(null);
+  const [dispatchId, setDispatchId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<EmailSendProgress | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
 
   const statCardStyle = {
     borderRadius: 12,
@@ -144,6 +150,58 @@ export default function EnviarEmailsPage() {
     setCredorOptions([]);
   }, [grupoId]);
 
+  useEffect(() => {
+    if (!dispatchId) return;
+
+    let canceled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const pullProgress = async () => {
+      try {
+        const value = await getEnvioEmailsProgresso(dispatchId);
+        if (canceled) return;
+        setProgress(value);
+
+        if (value.status === 'completed') {
+          setIsSending(false);
+          if (value.result) {
+            setLastSend(value.result);
+          }
+          const rel = await getEmailReport(120);
+          if (!canceled) {
+            setReport(rel);
+            setDispatchId(null);
+          }
+          if (timer) clearInterval(timer);
+        }
+
+        if (value.status === 'failed') {
+          setIsSending(false);
+          setSendError(value.error ?? 'Falha ao executar envio em lote.');
+          setDispatchId(null);
+          if (timer) clearInterval(timer);
+        }
+      } catch (e) {
+        if (!canceled) {
+          setSendError((e as Error).message);
+          setIsSending(false);
+          setDispatchId(null);
+        }
+        if (timer) clearInterval(timer);
+      }
+    };
+
+    void pullProgress();
+    timer = setInterval(() => {
+      void pullProgress();
+    }, 1200);
+
+    return () => {
+      canceled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [dispatchId]);
+
   async function handleSaveTemplate(event: FormEvent) {
     event.preventDefault();
     await updateEmailTemplate({
@@ -155,15 +213,17 @@ export default function EnviarEmailsPage() {
 
   async function handleSend(event: FormEvent) {
     event.preventDefault();
-    const result = await enviarEmails({
+    setSendError(null);
+    setProgress(null);
+    setIsSending(true);
+
+    const started = await iniciarEnvioEmails({
       grupoId: grupoId || undefined,
       numero_pgc: numeroPgc,
       escopo,
       credorIds: escopo === 'credor' ? selectedCredorIds : undefined,
     });
-    setLastSend(result);
-    const rel = await getEmailReport(120);
-    setReport(rel);
+    setDispatchId(started.dispatchId);
   }
 
   return (
@@ -204,9 +264,11 @@ export default function EnviarEmailsPage() {
           </label>
 
           <div style={{ display: 'flex', alignItems: 'end' }}>
-            <ActionButton type="submit" label="Enviar e-mails" icon="->" />
+            <ActionButton type="submit" label={isSending ? 'Enviando...' : 'Enviar e-mails'} icon="->" disabled={isSending} />
           </div>
         </form>
+
+        {sendError ? <p style={{ color: 'var(--danger)', marginTop: 8 }}>{sendError}</p> : null}
 
         {escopo === 'credor' && (
           <div style={{ marginTop: 12 }}>
@@ -383,6 +445,82 @@ export default function EnviarEmailsPage() {
           })}
         </ul>
       </SectionCard>
+
+      {(isSending || progress) ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(12, 26, 22, 0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 16,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(900px, 100%)',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              borderRadius: 14,
+              border: '1px solid var(--border)',
+              background: 'rgba(245, 250, 248, 0.98)',
+              boxShadow: '0 12px 42px rgba(0,0,0,0.2)',
+              padding: 16,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <h3 style={{ margin: 0 }}>Acompanhando envio em tempo real</h3>
+              {!isSending ? (
+                <ActionButton type="button" variant="secondary" label="Fechar" onClick={() => setProgress(null)} />
+              ) : null}
+            </div>
+
+            <p style={{ marginTop: 8, marginBottom: 10 }}>
+              {progress?.status === 'completed'
+                ? 'Envio concluído.'
+                : progress?.status === 'failed'
+                  ? 'Envio finalizado com falha.'
+                  : 'Processando credores...'}
+            </p>
+
+            <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 12 }}>
+              <div style={statCardStyle}><strong>Total</strong><div>{progress?.totalCredores ?? 0}</div></div>
+              <div style={statCardStyle}><strong>Elegíveis</strong><div>{progress?.totalElegiveis ?? 0}</div></div>
+              <div style={pendingStyle}><strong>Pendentes</strong><div>{progress?.pending ?? 0}</div></div>
+              <div style={sentStyle}><strong>Enviados</strong><div>{progress?.sent ?? 0}</div></div>
+              <div style={failedStyle}><strong>Falhas</strong><div>{progress?.failed ?? 0}</div></div>
+              <div style={statCardStyle}><strong>Ignorados sem PGC</strong><div>{progress?.skipped_sem_pgc ?? 0}</div></div>
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <strong>Credor atual:</strong> {progress?.currentCredor?.nome ?? (isSending ? 'iniciando...' : '-')}
+            </div>
+
+            <div style={{ border: '1px solid var(--border)', borderRadius: 10, maxHeight: 320, overflowY: 'auto', background: 'rgba(255,255,255,0.75)' }}>
+              {(progress?.recent ?? []).length === 0 ? (
+                <div style={{ padding: 12 }}>Aguardando primeiros resultados...</div>
+              ) : (
+                (progress?.recent ?? []).map((item) => (
+                  <div
+                    key={`${item.credorId}-${item.at}`}
+                    style={{
+                      borderBottom: '1px solid var(--border)',
+                      padding: '8px 10px',
+                      background: item.status === 'sent' ? 'rgba(61,154,82,0.10)' : 'rgba(196,71,71,0.10)',
+                    }}
+                  >
+                    <strong>{item.nome}</strong> - {item.status === 'sent' ? 'enviado' : 'falhou'}
+                    {item.error ? ` - ${item.error}` : ''}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </DashboardShell>
   );
 }

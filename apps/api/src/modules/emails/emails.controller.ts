@@ -24,6 +24,16 @@ export class EmailsController {
     return this.service.sendBatch(dto);
   }
 
+  @Post('enviar/async')
+  sendBatchAsync(@Body() dto: SendEmailsDto) {
+    return this.service.sendBatchAsync(dto);
+  }
+
+  @Get('enviar/progresso/:dispatchId')
+  getBatchProgress(@Param('dispatchId') dispatchId: string) {
+    return this.service.getSendBatchProgress(dispatchId);
+  }
+
   @Post('enviar/:credorId')
   sendIndividual(@Param('credorId') credorId: string, @Query('numero_pgc') numeroPgc: string) {
     return this.service.sendIndividual(credorId, numeroPgc);

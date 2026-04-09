@@ -54,7 +54,10 @@ export default function CredoresPage() {
     (async () => {
       try {
         const dashboard = await getDashboardEnvio(grupoId || undefined);
-        const pgcs = Array.from(new Set((dashboard?.por_pgc ?? []).map((row: { numero_pgc: string }) => String(row.numero_pgc ?? '').trim()))).sort((a: string, b: string) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+        const pgcs: string[] = Array.from(
+          new Set((dashboard?.por_pgc ?? []).map((row: { numero_pgc: string }) => String(row.numero_pgc ?? '').trim())),
+        );
+        pgcs.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
         setPgcOptions(pgcs);
         if (numeroPgc && !pgcs.includes(numeroPgc)) setNumeroPgc('');
       } catch {

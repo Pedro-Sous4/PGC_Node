@@ -60,6 +60,52 @@ type SkippedSemPgcDetail = {
   nome: string;
 };
 
+type SendBatchResult = SendReport & {
+  skipped_sem_pgc: number;
+  skipped_sem_pgc_details: SkippedSemPgcDetail[];
+  lotes: Array<{
+    lote: number;
+    totalCredores: number;
+    sent: number;
+    failed: number;
+    pending: number;
+  }>;
+  total_geral: {
+    totalCredores: number;
+    sent: number;
+    failed: number;
+    pending: number;
+    skipped_sem_pgc: number;
+    quantidadeLotes: number;
+    tamanhoLoteConfigurado: number;
+  };
+};
+
+type SendDispatchProgress = {
+  dispatchId: string;
+  status: 'running' | 'completed' | 'failed';
+  numero_pgc: string;
+  startedAt: string;
+  finishedAt?: string;
+  totalCredores: number;
+  totalElegiveis: number;
+  skipped_sem_pgc: number;
+  processed: number;
+  sent: number;
+  failed: number;
+  pending: number;
+  currentCredor?: { id: string; nome: string };
+  recent: Array<{
+    credorId: string;
+    nome: string;
+    status: 'sent' | 'failed';
+    error?: string;
+    at: string;
+  }>;
+  result?: SendBatchResult;
+  error?: string;
+};
+
 type MailAttachment = {
   filename: string;
   path?: string;
@@ -197,10 +243,64 @@ function adaptTemplateWithoutProdutividade(template: string): string {
 
 @Injectable()
 export class EmailsService {
+  private readonly dispatchProgress = new Map<string, SendDispatchProgress>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly systemSettingsService: SystemSettingsService,
   ) {}
+
+  private createDispatchId(): string {
+    return `dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  async sendBatchAsync(dto: SendEmailsDto): Promise<{ dispatchId: string }> {
+    const dispatchId = this.createDispatchId();
+
+    this.dispatchProgress.set(dispatchId, {
+      dispatchId,
+      status: 'running',
+      numero_pgc: dto.numero_pgc,
+      startedAt: new Date().toISOString(),
+      totalCredores: 0,
+      totalElegiveis: 0,
+      skipped_sem_pgc: 0,
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      pending: 0,
+      recent: [],
+    });
+
+    void this.sendBatch(dto, dispatchId)
+      .then((result) => {
+        const progress = this.dispatchProgress.get(dispatchId);
+        if (!progress) return;
+        progress.status = 'completed';
+        progress.finishedAt = new Date().toISOString();
+        progress.currentCredor = undefined;
+        progress.result = result;
+      })
+      .catch((err) => {
+        const progress = this.dispatchProgress.get(dispatchId);
+        if (!progress) return;
+        progress.status = 'failed';
+        progress.finishedAt = new Date().toISOString();
+        progress.currentCredor = undefined;
+        progress.error = (err as Error)?.message ?? 'Falha ao executar disparo.';
+      });
+
+    return { dispatchId };
+  }
+
+  async getSendBatchProgress(dispatchId: string): Promise<SendDispatchProgress> {
+    const progress = this.dispatchProgress.get(dispatchId);
+    if (!progress) {
+      throw new NotFoundException('Disparo nao encontrado.');
+    }
+
+    return progress;
+  }
 
   private resolveWorkspaceRoot(): string {
     const cwd = process.cwd();
@@ -241,12 +341,12 @@ export class EmailsService {
     return report;
   }
 
-  async sendBatch(dto: SendEmailsDto) {
+  async sendBatch(dto: SendEmailsDto, dispatchId?: string): Promise<SendBatchResult> {
     const where: Prisma.CredorWhereInput = {};
     if (dto.grupoId) where.grupoId = dto.grupoId;
     if (dto.escopo === 'credor') {
       if (!dto.credorIds?.length) {
-        return {
+        const emptyResult: SendBatchResult = {
           sent: 0,
           failed: 0,
           pending: 0,
@@ -264,6 +364,18 @@ export class EmailsService {
             tamanhoLoteConfigurado: 0,
           },
         };
+
+        if (dispatchId) {
+          const progress = this.dispatchProgress.get(dispatchId);
+          if (progress) {
+            progress.totalCredores = 0;
+            progress.totalElegiveis = 0;
+            progress.skipped_sem_pgc = 0;
+            progress.pending = 0;
+          }
+        }
+
+        return emptyResult;
       }
       where.id = { in: dto.credorIds };
     }
@@ -294,6 +406,16 @@ export class EmailsService {
       .filter((item) => !elegiveisSet.has(item.id))
       .map((item) => ({ credorId: item.id, nome: item.nomeExibivel }));
 
+    if (dispatchId) {
+      const progress = this.dispatchProgress.get(dispatchId);
+      if (progress) {
+        progress.totalCredores = candidatos.length;
+        progress.totalElegiveis = credorIds.length;
+        progress.skipped_sem_pgc = skippedSemPgcDetails.length;
+        progress.pending = credorIds.length;
+      }
+    }
+
     const systemSettings = await this.systemSettingsService.getSettings();
     const chunkSize = Math.max(1, Number(systemSettings.envio.loteMaximoCredores ?? 200));
     const batches = chunkArray(credorIds, chunkSize);
@@ -316,7 +438,7 @@ export class EmailsService {
     for (let i = 0; i < batches.length; i += 1) {
       const batchNumber = i + 1;
       const ids = batches[i];
-      const parcial = await this.sendToCredores(ids, dto.numero_pgc, batchNumber);
+      const parcial = await this.sendToCredores(ids, dto.numero_pgc, batchNumber, dispatchId);
 
       total.sent += parcial.sent;
       total.failed += parcial.failed;
@@ -763,7 +885,12 @@ export class EmailsService {
     return uniqueAttachments(attachments);
   }
 
-  private async sendToCredores(credorIds: string[], numeroPgc: string, batch?: number): Promise<SendReport> {
+  private async sendToCredores(
+    credorIds: string[],
+    numeroPgc: string,
+    batch?: number,
+    dispatchId?: string,
+  ): Promise<SendReport> {
     const template = await this.getTemplate();
     const pgcDir = await this.resolvePgcDir(numeroPgc);
     const hasProdutividade = await this.hasProdutividadeArquivo(pgcDir);
@@ -815,6 +942,13 @@ export class EmailsService {
         include: { grupo: { select: { nome: true } } },
       });
       if (!credor) continue;
+
+      if (dispatchId) {
+        const progress = this.dispatchProgress.get(dispatchId);
+        if (progress) {
+          progress.currentCredor = { id: credor.id, nome: credor.nomeExibivel };
+        }
+      }
 
       const historico = await this.prisma.historicoPGC.findFirst({
         where: {
@@ -951,6 +1085,22 @@ export class EmailsService {
           info_descontos: infoDescontos || undefined,
           batch,
         });
+
+        if (dispatchId) {
+          const progress = this.dispatchProgress.get(dispatchId);
+          if (progress) {
+            progress.sent += 1;
+            progress.processed += 1;
+            progress.pending = Math.max(0, progress.totalElegiveis - progress.processed);
+            progress.recent.unshift({
+              credorId,
+              nome: credor.nomeExibivel,
+              status: 'sent',
+              at: new Date().toISOString(),
+            });
+            progress.recent = progress.recent.slice(0, 25);
+          }
+        }
       } catch (e) {
         const message = (e as Error).message;
         await this.prisma.emailLog.update({
@@ -974,6 +1124,23 @@ export class EmailsService {
           error: message,
           batch,
         });
+
+        if (dispatchId) {
+          const progress = this.dispatchProgress.get(dispatchId);
+          if (progress) {
+            progress.failed += 1;
+            progress.processed += 1;
+            progress.pending = Math.max(0, progress.totalElegiveis - progress.processed);
+            progress.recent.unshift({
+              credorId,
+              nome: credor.nomeExibivel,
+              status: 'failed',
+              error: message,
+              at: new Date().toISOString(),
+            });
+            progress.recent = progress.recent.slice(0, 25);
+          }
+        }
       } finally {
         if (intervaloEntreEnvios > 0) {
           await wait(intervaloEntreEnvios);

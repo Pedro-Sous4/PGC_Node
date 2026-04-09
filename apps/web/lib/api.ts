@@ -135,6 +135,31 @@ export interface EmailSendResult {
   };
 }
 
+export interface EmailSendProgress {
+  dispatchId: string;
+  status: 'running' | 'completed' | 'failed';
+  numero_pgc: string;
+  startedAt: string;
+  finishedAt?: string;
+  totalCredores: number;
+  totalElegiveis: number;
+  skipped_sem_pgc: number;
+  processed: number;
+  sent: number;
+  failed: number;
+  pending: number;
+  currentCredor?: { id: string; nome: string };
+  recent: Array<{
+    credorId: string;
+    nome: string;
+    status: 'sent' | 'failed';
+    error?: string;
+    at: string;
+  }>;
+  result?: EmailSendResult;
+  error?: string;
+}
+
 export async function createUploadJob(flow: string, credores: string[]): Promise<{ request_id: string }> {
   const res = await fetch(`${API}/jobs/pgc/upload`, {
     method: 'POST',
@@ -349,6 +374,30 @@ export async function enviarEmails(payload: {
   });
   if (!res.ok) throw new Error('Falha ao enviar e-mails');
   return res.json() as Promise<EmailSendResult>;
+}
+
+export async function iniciarEnvioEmails(payload: {
+  grupoId?: string;
+  numero_pgc: string;
+  escopo: 'todos' | 'credor' | 'empresa';
+  credorIds?: string[];
+  empresa_nome_curto?: string;
+}): Promise<{ dispatchId: string }> {
+  const res = await fetch(`${API}/emails/enviar/async`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error('Falha ao iniciar envio de e-mails');
+  return res.json() as Promise<{ dispatchId: string }>;
+}
+
+export async function getEnvioEmailsProgresso(dispatchId: string): Promise<EmailSendProgress> {
+  const res = await fetch(`${API}/emails/enviar/progresso/${encodeURIComponent(dispatchId)}`, {
+    cache: 'no-store',
+  });
+  if (!res.ok) throw new Error('Falha ao consultar progresso do envio');
+  return res.json() as Promise<EmailSendProgress>;
 }
 
 export async function getEmailReport(limit = 100) {
