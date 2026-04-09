@@ -23,3 +23,6 @@ requests/*/
 
 # Backups locais
 backups/
+
+# GitHub workflows (token sem scope workflow)
+.github/
