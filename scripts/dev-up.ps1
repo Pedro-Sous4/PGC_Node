@@ -117,7 +117,7 @@ if (!(Test-Path '.env') -and (Test-Path '.env.example')) {
 
 $databaseUrl = Get-EnvValue -Path '.env' -Key 'DATABASE_URL' -DefaultValue 'postgresql://postgres:postgres@localhost:5432/pgc'
 $apiPort = Get-EnvValue -Path '.env' -Key 'APP_PORT' -DefaultValue '3001'
-$webPort = '3000'
+$webPort = Get-EnvValue -Path '.env' -Key 'WEB_PORT' -DefaultValue '3000'
 
 New-Item -ItemType Directory -Path '.runtime' -Force | Out-Null
 
@@ -127,10 +127,10 @@ Stop-ByPattern -Pattern '@pgc/worker run dev'
 Stop-ByPattern -Pattern '@pgc/web run dev'
 Stop-ByPattern -Pattern 'ts-node-dev\\lib\\wrap\.js src/main\.ts'
 Stop-ByPattern -Pattern 'ts-node-dev\\lib\\bin\.js.*src/main\.ts'
-Stop-ByPattern -Pattern 'next dev -p 3000'
+Stop-ByPattern -Pattern 'next dev'
 Stop-ByPattern -Pattern 'next\\dist\\server\\lib\\start-server\.js'
-Stop-ByPort -Port 3000
-Stop-ByPort -Port 3001
+Stop-ByPort -Port ([int]$webPort)
+Stop-ByPort -Port ([int]$apiPort)
 Start-Sleep -Seconds 1
 
 Write-Host 'Limpando cache de build do frontend (.next)...'
@@ -193,7 +193,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $apiPid = Start-AppProcess -Name 'api' -Command "set DATABASE_URL=$databaseUrl && npm --workspace @pgc/api run dev"
 $workerPid = Start-AppProcess -Name 'worker' -Command 'npm --workspace @pgc/worker run dev'
-$webPid = Start-AppProcess -Name 'web' -Command 'npm --workspace @pgc/web run dev'
+$webPid = Start-AppProcess -Name 'web' -Command "set PORT=$webPort && npm --workspace @pgc/web run dev"
 
 Write-Host 'Aguardando API e Web ficarem disponiveis...'
 $null = Wait-ForHttp -Name 'API' -Url "http://localhost:$apiPort/health"
