@@ -1,0 +1,258 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  SUCCESS
+  ERROR
+  CANCELED
+}
+
+model Credor {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  nomeExibivel   String
+  nomeCanonico   String   @unique
+  email          String?
+  periodo        String?
+  enviado        Boolean  @default(false)
+  data_envio     DateTime?
+  grupoId        String?
+  protegidoNome  Boolean  @default(false)
+  protegidoEmail Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  actor          String?
+  source         String?
+
+  grupo      Grupo?                  @relation(fields: [grupoId], references: [id], onDelete: SetNull)
+  rendimentos Rendimento[]
+  historicos  HistoricoPGC[]
+  emailLogs   EmailLog[]
+  statuses CredorProcessingStatus[]
+
+  @@index([grupoId])
+  @@index([enviado])
+}
+
+model Grupo {
+  id         String   @id @default(cuid())
+  nome       String   @unique
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  actor      String?
+  source     String?
+
+  credores Credor[]
+}
+
+model EmpresaPagadora {
+  id            String   @id @default(cuid())
+  nome          String?  @unique
+  nome_curto    String   @unique
+  nome_completo String
+  cnpj          String?  @unique
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  actor         String?
+  source        String?
+}
+
+model Rendimento {
+  id         String   @id @default(cuid())
+  credorId   String
+  numero_pgc String?
+  referencia String
+  valor      Decimal  @db.Decimal(18, 2)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  actor      String?
+  source     String?
+
+  credor Credor @relation(fields: [credorId], references: [id], onDelete: Cascade)
+
+  @@index([credorId, numero_pgc])
+  @@index([credorId, referencia])
+}
+
+model HistoricoPGC {
+  id         String   @id @default(cuid())
+  requestId  String
+  credorId   String?
+  numero_pgc String?
+  periodo    String?
+  valorTotal Decimal? @db.Decimal(18, 2)
+  evento     String
+  payload    Json?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  actor      String?
+  source     String?
+
+  credor Credor? @relation(fields: [credorId], references: [id], onDelete: SetNull)
+
+  @@index([credorId, numero_pgc, periodo])
+  @@index([requestId, created_at])
+}
+
+model EmailLog {
+  id          String           @id @default(cuid())
+  requestId   String
+  credorId    String?
+  status      ProcessingStatus @default(PENDING)
+  toEmail     String
+  attempts    Int              @default(0)
+  tentativas  Int              @default(0)
+  last_attempt_at DateTime?
+  sent_at     DateTime?
+  erroTecnico String?
+  error_message String?
+  created_at  DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
+  actor       String?
+  source      String?
+
+  credor Credor? @relation(fields: [credorId], references: [id], onDelete: SetNull)
+
+  @@index([requestId, status])
+}
+
+model ProcessingJob {
+  id         String           @id @default(cuid())
+  requestId  String           @unique
+  status     ProcessingStatus @default(PENDING)
+  stage      String
+  percent    Int              @default(0)
+  created_at DateTime         @default(now())
+  updated_at DateTime         @updatedAt
+  actor      String?
+  source     String?
+
+  steps    ProcessingStep[]
+  credores CredorProcessingStatus[]
+  errors   ProcessingError[]
+}
+
+model ProcessingStep {
+  id              String           @id @default(cuid())
+  processingJobId String
+  name            String
+  status          ProcessingStatus @default(PENDING)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  timeoutMs       Int?
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+
+  processingJob ProcessingJob @relation(fields: [processingJobId], references: [id], onDelete: Cascade)
+
+  @@index([processingJobId, status])
+}
+
+model CredorProcessingStatus {
+  id              String           @id @default(cuid())
+  processingJobId String
+  credorId        String
+  stage           String
+  status          ProcessingStatus @default(PENDING)
+  warning         String?
+  errorMessage    String?
+  created_at      DateTime         @default(now())
+  updated_at      DateTime         @updatedAt
+
+  processingJob ProcessingJob @relation(fields: [processingJobId], references: [id], onDelete: Cascade)
+  credor        Credor        @relation(fields: [credorId], references: [id], onDelete: Restrict)
+
+  @@unique([processingJobId, credorId, stage])
+  @@index([processingJobId, status])
+}
+
+model ProcessingError {
+  id              String   @id @default(cuid())
+  processingJobId String
+  credorSlug      String?
+  code            String
+  message         String
+  technicalDetail String?
+  resolutionAction String?
+  resolutionNote   String?
+  resolvedAt       DateTime?
+  ignoredAt        DateTime?
+  created_at      DateTime @default(now())
+
+  processingJob ProcessingJob @relation(fields: [processingJobId], references: [id], onDelete: Cascade)
+
+  @@index([processingJobId, credorSlug])
+}
+
+model ProcessingArtifact {
+  id         String   @id @default(cuid())
+  requestId  String
+  version    Int      @default(1)
+  type       String
+  path       String
+  checksum   String?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@unique([requestId, type, version])
+  @@index([requestId])
+}
+
+model ReprocessJob {
+  id         String           @id @default(cuid())
+  requestId  String
+  status     ProcessingStatus @default(PENDING)
+  created_at DateTime         @default(now())
+  updated_at DateTime         @updatedAt
+
+  items ReprocessItem[]
+
+  @@index([requestId, status])
+}
+
+model ReprocessItem {
+  id             String           @id @default(cuid())
+  reprocessJobId String
+  credorSlug     String
+  status         ProcessingStatus @default(PENDING)
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
+
+  reprocessJob ReprocessJob @relation(fields: [reprocessJobId], references: [id], onDelete: Cascade)
+
+  @@unique([reprocessJobId, credorSlug])
+}
+
+model AppUser {
+  id             String   @id @default(cuid())
+  nome           String
+  email          String   @unique
+  passwordHash   String
+  active         Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  last_login_at  DateTime?
+
+  resetTokens PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique
+  expiresAt  DateTime
+  usedAt     DateTime?
+  created_at DateTime @default(now())
+
+  user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}

@@ -1,0 +1,29 @@
+{
+  "name": "pgc-node-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run --workspaces --if-present build",
+    "dev": "npm run --workspaces --if-present dev",
+    "dev:up": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-up.ps1",
+    "dev:down": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-down.ps1",
+    "dev:restart": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-restart.ps1",
+    "dev:status": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-status.ps1",
+    "dev:logs": "powershell -ExecutionPolicy Bypass -File ./scripts/dev-logs.ps1",
+    "lint": "npm run --workspaces --if-present lint && npm run lint:ui-ptbr",
+    "lint:ui-ptbr": "node ./scripts/check-ui-ptbr.js",
+    "test": "npm run --workspaces --if-present test",
+    "prisma:generate": "npm --workspace apps/api run prisma:generate",
+    "prisma:migrate": "npm --workspace apps/api run prisma:migrate"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

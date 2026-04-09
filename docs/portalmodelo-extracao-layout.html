@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Extracao Layout Portal Modelo</title>
+  <style>
+    :root {
+      --blue-900: #062a56;
+      --blue-800: #0b3d7a;
+      --blue-700: #1257a3;
+      --bg: #eef1f5;
+      --card: #ffffff;
+      --line: #d9dfe8;
+      --text: #1f2a37;
+      --muted: #64748b;
+      --alert-bg: #fdeeee;
+      --alert: #cb2f2f;
+      --ok: #0f7a4d;
+      --warn: #d08a1e;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+
+    .status-strip {
+      height: 40px;
+      background: #f3f5f8;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 16px;
+      font-size: 13px;
+    }
+    .chip {
+      background: #e6e9ef;
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: #374151;
+    }
+
+    .topbar {
+      height: 56px;
+      background: var(--blue-900);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+    .brand {
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: lowercase;
+    }
+    .top-actions { display: flex; gap: 10px; }
+    .btn {
+      border: 0;
+      border-radius: 999px;
+      padding: 8px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--blue-700);
+      cursor: default;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 200px 1fr 360px;
+      gap: 16px;
+      padding: 16px;
+      min-height: calc(100vh - 96px);
+    }
+
+    .sidebar {
+      background: #f6f8fb;
+      border-right: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .sidebar h3 {
+      margin: 0 0 10px;
+      font-size: 22px;
+      color: #223044;
+    }
+    .menu-item {
+      height: 42px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      margin-bottom: 6px;
+      font-weight: 600;
+      color: #1f3554;
+      background: transparent;
+    }
+    .menu-item.active { background: #e8edf4; }
+
+    .content {
+      display: grid;
+      grid-template-rows: auto auto auto 1fr;
+      gap: 12px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .hero {
+      padding: 16px 18px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 34px;
+      font-weight: 700;
+    }
+    .hero .network { color: var(--blue-700); }
+
+    .protocol {
+      padding: 14px 18px;
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .protocol b { color: var(--blue-700); }
+
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .kpi {
+      min-height: 120px;
+      padding: 10px 12px;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: #fff;
+      display: grid;
+      grid-template-rows: auto auto 1fr;
+      gap: 6px;
+    }
+    .kpi h4 { margin: 0; font-size: 16px; color: var(--blue-700); }
+    .kpi .n { font-size: 48px; font-weight: 800; }
+    .kpi .d { color: #334155; font-weight: 600; }
+    .kpi.warn { border-left: 6px solid #dd3535; }
+    .kpi.info { border-left: 6px solid #2f74d0; }
+
+    .charts {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 12px;
+    }
+    .chart {
+      min-height: 290px;
+      padding: 12px;
+      position: relative;
+    }
+    .chart .title { font-weight: 800; color: var(--blue-700); margin-bottom: 8px; }
+    .placeholder {
+      height: 220px;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #cde4fb 0%, #eaf3fc 100%);
+      border: 1px solid #c8d9ec;
+    }
+
+    .right {
+      background: var(--blue-900);
+      border-radius: var(--radius);
+      border: 1px solid #0a2f60;
+      padding: 12px;
+      color: #fff;
+      display: grid;
+      grid-template-rows: auto 1fr;
+      gap: 10px;
+      overflow: hidden;
+    }
+    .right h2 {
+      margin: 0;
+      font-size: 44px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .alerts {
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+    .alert {
+      background: var(--alert-bg);
+      color: #1e293b;
+      border-left: 6px solid var(--alert);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .alert strong { color: var(--alert); display: block; margin-bottom: 6px; }
+    .alert a { color: #0b4aa0; font-weight: 700; text-decoration: underline; }
+
+    @media (max-width: 1200px) {
+      .app { grid-template-columns: 180px 1fr; }
+      .right { grid-column: 1 / -1; min-height: 340px; }
+    }
+
+    @media (max-width: 860px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { order: 2; }
+      .content { order: 1; }
+      .kpis { grid-template-columns: 1fr 1fr; }
+      .charts { grid-template-columns: 1fr; }
+      .hero, .protocol { font-size: 22px; }
+      .right h2 { font-size: 30px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="status-strip">
+    <b>Codigo do Credenciado:</b> <span class="chip">487408</span>
+    <b>Protocolo Atual:</b> <span class="chip">Beta</span>
+    <b>Rede:</b> <span class="chip">Rede III Geral</span>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">odontoprev</div>
+    <div class="top-actions">
+      <button class="btn">TROCAR SENHA</button>
+      <button class="btn">SAIR</button>
+    </div>
+  </header>
+
+  <div class="app">
+    <aside class="sidebar card">
+      <h3>Menu</h3>
+      <div class="menu-item active">Home</div>
+      <div class="menu-item">Atendimento</div>
+      <div class="menu-item">Arquivo digital</div>
+      <div class="menu-item">Recurso de Glosa</div>
+      <div class="menu-item">Financeiro</div>
+      <div class="menu-item">Autossservico</div>
+      <div class="menu-item">Biblioteca</div>
+      <div class="menu-item">Beneficios</div>
+      <div class="menu-item">Consultor Online</div>
+    </aside>
+
+    <main class="content">
+      <section class="hero card">
+        <div>Bem-vindo(a), Dr(a). SUELEN REIS CUNHA DE SOUSA</div>
+        <div class="network">Rede:Rede III Geral</div>
+      </section>
+
+      <section class="protocol card">
+        O protocolo vigente para suas operacoes e: <b>Beta</b>
+      </section>
+
+      <section class="kpis">
+        <article class="kpi warn">
+          <h4>Guias pendentes</h4>
+          <div class="n" style="color:#d23636;">5</div>
+          <div class="d">Aguardando justificativa tecnica e/ou documentacao</div>
+        </article>
+        <article class="kpi warn">
+          <h4>Pacientes Inativos</h4>
+          <div class="n" style="color:#d23636;">2</div>
+          <div class="d">GTOs com beneficiarios inativos</div>
+        </article>
+        <article class="kpi info">
+          <h4>Termo de Aceite</h4>
+          <div class="n" style="color:#1f4f9a;">0</div>
+          <div class="d">Termo de aceite pendente</div>
+        </article>
+        <article class="kpi info">
+          <h4>Atualizacao Cadastral</h4>
+          <div class="n" style="color:#1f4f9a;">74 <small style="font-size:18px;">dias</small></div>
+          <div class="d">Para expirar o alvara</div>
+        </article>
+      </section>
+
+      <section class="charts">
+        <article class="chart card">
+          <div class="title">Evolucao de Repasse</div>
+          <div class="placeholder" aria-hidden="true"></div>
+        </article>
+        <article class="chart card">
+          <div class="title">Quantidade de GTOs</div>
+          <div class="placeholder" aria-hidden="true"></div>
+        </article>
+      </section>
+    </main>
+
+    <aside class="right">
+      <h2>Comunicados</h2>
+      <div class="alerts">
+        <article class="alert">
+          <strong>Atencao! Vinculo de imagens!</strong>
+          Acesse as imagens recentes e realize o vinculo na GTO. <a href="#">Saiba mais!</a>
+        </article>
+        <article class="alert">
+          <strong>Atencao! Clareamento Caseiro!</strong>
+          Mudanca no processo de cobranca do clareamento caseiro. <a href="#">Saiba mais!</a>
+        </article>
+        <article class="alert">
+          <strong>Atencao! Novidades no app do Credenciado!</strong>
+          Via app e possivel liberar senhas e incluir procedimentos em GTOs. <a href="#">Saiba mais!</a>
+        </article>
+        <article class="alert">
+          <strong>Atencao! Aviso importante!</strong>
+          Ecossistema de saude - Odontoprev e Bradesaude. <a href="#">Saiba mais!</a>
+        </article>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>

@@ -1,0 +1,178 @@
+{
+  "arquivo": "C:\\PGC_Node\\apps\\api\\artifacts\\lgm\\e74897a5-e3b4-4917-a66a-a52c48b01b04\\PGC 36.xlsx",
+  "aba": "PGC 36",
+  "regra": "CREDOR/MINIMO/EMPRESA/CNPJ a partir da linha 8 (primary 31/39/40/41; fallback AG/AO/AP/AQ)",
+  "totalMinimos": 14,
+  "amostra": [
+    {
+      "linha": 30,
+      "credor": "SUZILEIA LUCAS VIANA WATTAGE",
+      "minimo": 9937.5,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 149,
+      "credor": "NEIMARY STEFANY AVILA PINTO",
+      "minimo": 550,
+      "empresa": "74 - ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA",
+      "cnpj": "30.182.622/0004-91"
+    },
+    {
+      "linha": 235,
+      "credor": "DAIANE PLATES BONFANTE",
+      "minimo": 4000,
+      "empresa": "74 - ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA",
+      "cnpj": "30.182.622/0004-91"
+    },
+    {
+      "linha": 236,
+      "credor": "MARIA EDUARDA SCHUTZ BOCH",
+      "minimo": 4000,
+      "empresa": "68 - ATHIVABRASIL EMPREENDIMENTOS IMOBILIÁRIOS LTDA",
+      "cnpj": "08.705.893/0001-82"
+    },
+    {
+      "linha": 237,
+      "credor": "ANDERSON LICK DE OLIVEIRA",
+      "minimo": 2400,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 238,
+      "credor": "ERICK NUNES DOS SANTOS",
+      "minimo": 800,
+      "empresa": "72 - CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA",
+      "cnpj": "30.145.972/0002-16"
+    },
+    {
+      "linha": 239,
+      "credor": "ESTIANDRE ESTEILAN DA SILVA DIAS",
+      "minimo": 2000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 240,
+      "credor": "HERICA MAREGA FRAGOSO",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 241,
+      "credor": "JORGE WILSON ALBUQUERQUE DE MENESES",
+      "minimo": 1200,
+      "empresa": "119 - RISERVA DOS VINHEDOS INCORPORADORA SPE LTDA",
+      "cnpj": "34.028.040/0003-25"
+    },
+    {
+      "linha": 242,
+      "credor": "JEAN WESLEY MARTINS SANTOS DE DEUS",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 243,
+      "credor": "LIDIA DE ARAUJO ROCHA",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 244,
+      "credor": "MELISSA LUANNA DO NASCIMENTO",
+      "minimo": 300,
+      "empresa": "24 - LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS",
+      "cnpj": "48.896.217/0024-44"
+    },
+    {
+      "linha": 245,
+      "credor": "SHAISTER THAUANNE DOS SANTOS RIBAS DA SILVA",
+      "minimo": 2700,
+      "empresa": "3 - GVP PARTICIPAÇÕES E INVESTIMENTOS LTDA",
+      "cnpj": "17.991.041/0001-90"
+    },
+    {
+      "linha": 246,
+      "credor": "SAULO BARRETO GIRAO DE AMORIM",
+      "minimo": 2200,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    }
+  ],
+  "ultimos": [
+    {
+      "linha": 237,
+      "credor": "ANDERSON LICK DE OLIVEIRA",
+      "minimo": 2400,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 238,
+      "credor": "ERICK NUNES DOS SANTOS",
+      "minimo": 800,
+      "empresa": "72 - CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA",
+      "cnpj": "30.145.972/0002-16"
+    },
+    {
+      "linha": 239,
+      "credor": "ESTIANDRE ESTEILAN DA SILVA DIAS",
+      "minimo": 2000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 240,
+      "credor": "HERICA MAREGA FRAGOSO",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 241,
+      "credor": "JORGE WILSON ALBUQUERQUE DE MENESES",
+      "minimo": 1200,
+      "empresa": "119 - RISERVA DOS VINHEDOS INCORPORADORA SPE LTDA",
+      "cnpj": "34.028.040/0003-25"
+    },
+    {
+      "linha": 242,
+      "credor": "JEAN WESLEY MARTINS SANTOS DE DEUS",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 243,
+      "credor": "LIDIA DE ARAUJO ROCHA",
+      "minimo": 3000,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    },
+    {
+      "linha": 244,
+      "credor": "MELISSA LUANNA DO NASCIMENTO",
+      "minimo": 300,
+      "empresa": "24 - LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS",
+      "cnpj": "48.896.217/0024-44"
+    },
+    {
+      "linha": 245,
+      "credor": "SHAISTER THAUANNE DOS SANTOS RIBAS DA SILVA",
+      "minimo": 2700,
+      "empresa": "3 - GVP PARTICIPAÇÕES E INVESTIMENTOS LTDA",
+      "cnpj": "17.991.041/0001-90"
+    },
+    {
+      "linha": 246,
+      "credor": "SAULO BARRETO GIRAO DE AMORIM",
+      "minimo": 2200,
+      "empresa": "6 - LGM PARTICIPACOES LTDA | FILIAL BORGES",
+      "cnpj": "48.896.217/0004-09"
+    }
+  ]
+}

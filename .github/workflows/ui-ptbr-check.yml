@@ -1,0 +1,39 @@
+name: ui-ptbr-check
+
+on:
+  push:
+    paths:
+      - apps/web/**
+      - scripts/check-ui-ptbr.js
+      - scripts/ui-ptbr-rules.json
+      - package.json
+      - package-lock.json
+      - .github/workflows/ui-ptbr-check.yml
+  pull_request:
+    paths:
+      - apps/web/**
+      - scripts/check-ui-ptbr.js
+      - scripts/ui-ptbr-rules.json
+      - package.json
+      - package-lock.json
+      - .github/workflows/ui-ptbr-check.yml
+
+jobs:
+  lint-ui-ptbr:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run UI pt-BR check
+        run: npm run lint:ui-ptbr

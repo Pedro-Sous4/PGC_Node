@@ -1,0 +1,16 @@
+{
+  "name": "@pgc/shared",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json -w",
+    "lint": "echo 'lint not configured yet'",
+    "test": "echo 'test not configured yet'"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

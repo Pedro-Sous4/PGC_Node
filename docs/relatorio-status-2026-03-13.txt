@@ -1,0 +1,148 @@
+RELATORIO DE IMPLEMENTACAO - PGC NODE
+Data: 2026-03-13
+Workspace: C:/PGC_Node
+
+1) RESUMO EXECUTIVO
+- O monorepo foi criado do zero com apps separados para API, Worker e Web.
+- A base obrigatoria da stack foi implementada (NestJS, Next.js, Prisma, Postgres, Redis, BullMQ, observabilidade).
+- O fluxo assincrono principal esta funcional: upload cria job, API enfileira, worker processa por etapas e por credor.
+- A persistencia de processamento foi evoluida para Postgres na Iteracao 02.
+- A interface web foi reestruturada para um layout estilo dashboard moderno (inspiracao Zenith).
+- A operacao local foi automatizada com scripts de orquestracao (up/down/restart/status/logs).
+- Os scripts foram estabilizados para Windows (eliminacao de processos stale, retries de readiness e status confiavel).
+
+2) ARQUITETURA IMPLEMENTADA
+2.1 Monorepo
+- apps/api
+- apps/worker
+- apps/web
+- packages/contracts
+- packages/domain
+- packages/shared
+- prisma
+- infra
+
+2.2 Backend (API)
+- Framework: NestJS + TypeScript strict.
+- Modulos principais: jobs, ops, progress.
+- Endpoints de jobs e operacionais implementados.
+- Swagger habilitado em /docs.
+- Validacao com class-validator (ValidationPipe global).
+- Logs estruturados com Pino.
+- Endpoint de metricas para Prometheus.
+- Bootstrap de OpenTelemetry (habilitavel por ambiente).
+
+2.3 Processamento assincrono (Worker)
+- Filas BullMQ:
+  - pgc-processing
+  - email-dispatch
+  - report-generation
+- Worker com pipeline por etapa e por credor.
+- Timeouts e fallback por etapa/credor para resiliencia.
+- Isolamento de erro por credor (falha de 1 credor nao derruba job global).
+- Integracao com API para atualizacao de progresso/status.
+
+2.4 Persistencia e estado
+- ORM: Prisma.
+- Banco: PostgreSQL.
+- Redis para lock por request_id e coordenacao.
+- Estruturas de processamento persistidas:
+  - ProcessingJob
+  - ProcessingStep
+  - CredorProcessingStatus
+  - ProcessingError
+  - ProcessingArtifact
+  - ReprocessJob
+  - ReprocessItem
+
+2.5 Frontend (Web)
+- Next.js App Router + React + TypeScript.
+- TanStack Query para consumo de API.
+- Acompanhamento de progresso em tempo real (SSE).
+- Dashboard shell com sidebar/topbar/cards.
+- Tela de acompanhamento por request_id.
+
+2.6 Infra local
+- Docker Compose com:
+  - Postgres
+  - Redis
+  - MinIO
+  - Prometheus
+- Ajuste recente: remocao da chave obsoleta version no compose.
+
+3) FUNCIONALIDADES JA DISPONIVEIS
+3.1 API e processamento
+- Criar processamento de upload (job async).
+- Consultar status do processamento por request_id.
+- Consultar erros por request_id.
+- Consultar status por credor.
+- Reprocessar credores selecionados.
+- Cancelar job.
+- Listar artefatos do job.
+- Endpoints operacionais:
+  - /health
+  - /ready
+  - /metrics
+  - /docs
+
+3.2 Comportamento de resiliencia
+- Falha por credor isolada.
+- Timeout por etapa e por credor.
+- Fallback em etapas criticas (ex.: descontos) com continuidade.
+- Controle de corrida com lock Redis por request_id.
+
+3.3 Operacao local (DX)
+Comandos prontos no package.json:
+- npm run dev:up
+- npm run dev:down
+- npm run dev:restart
+- npm run dev:status
+- npm run dev:logs
+
+Suporte adicional:
+- Logs por servico (api/worker/web/docker) e follow.
+- Arquivo .runtime/dev-pids.json para rastreio de processos.
+
+4) MELHORIAS OPERACIONAIS FEITAS NOS SCRIPTS
+- Scripts PowerShell reforcados para ambiente Windows.
+- Encerramento de arvore de processos com taskkill /T /F.
+- Limpeza preventiva de listeners em 3000 e 3001.
+- Espera ativa de readiness para Postgres, Redis, API e Web.
+- Status com retries HTTP e fallback de descoberta por pattern.
+- Reducao de falso DOWN durante janela de startup.
+
+5) ITENS DOCUMENTADOS NAS ITERACOES
+- docs/iteracao-01.md: fundacao arquitetural e escopo inicial.
+- docs/iteracao-02.md: persistencia real no Postgres, lock Redis e resiliencia no worker.
+
+6) O QUE AINDA NAO ESTA COMPLETO (PENDENCIAS)
+- Modulos de dominio completos de negocio (auth/credor/rendimento/historico/email/admin-ops em nivel de producao).
+- Pipeline real completo de ingestao LGM e regras de negocio finais (abas e normalizacoes detalhadas).
+- Exportacoes finais completas (PDF/CSV/XLSX/ZIP) com regras finais de negocio.
+- Envio de email real com tracking aprofundado em producao.
+- Suite completa de testes (unit/integration/e2e/load) e evidencias formais de SLO.
+- Endurecimento de autenticacao service-to-service para endpoints internos de progresso.
+
+7) STATUS ATUAL PRATICO
+- Ambiente local pode ser levantado por comando unico.
+- API, Worker, Web e containers de infra sobem de forma consistente apos ajustes recentes.
+- Estado do processamento ja persiste em banco e pode ser consultado.
+- Frontend ja apresenta acompanhamento operacional em tempo real.
+
+8) ARQUIVOS-CHAVE PARA REFERENCIA RAPIDA
+- README.md
+- docs/iteracao-01.md
+- docs/iteracao-02.md
+- docker-compose.yml
+- scripts/dev-up.ps1
+- scripts/dev-down.ps1
+- scripts/dev-restart.ps1
+- scripts/dev-status.ps1
+- scripts/dev-logs.ps1
+- apps/api/src/main.ts
+- apps/api/src/modules/jobs/application/jobs.service.ts
+- apps/worker/src/queues/processing.worker.ts
+- apps/web/app/page.tsx
+- apps/web/app/jobs/[requestId]/page.tsx
+
+FIM DO RELATORIO

@@ -1,0 +1,34 @@
+{
+  "forbiddenTerms": [
+    "home",
+    "dashboard",
+    "upload",
+    "download",
+    "search",
+    "new order",
+    "workspace",
+    "job",
+    "jobs",
+    "login",
+    "signup",
+    "password reset",
+    "submit",
+    "reset",
+    "template",
+    "polling",
+    "logs",
+    "log",
+    "error",
+    "step"
+  ],
+  "allowedTexts": [
+    "laghetto sports",
+    "laghetto golden (lgm)",
+    "ctrl+k",
+    "csv",
+    "xlsx",
+    "zip",
+    "pgc",
+    "request_id"
+  ]
+}

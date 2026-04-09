@@ -1,0 +1,25 @@
+node_modules
+npm-debug.log*
+.yarn
+.pnpm-store
+.next
+dist
+coverage
+.env
+.env.local
+*.tsbuildinfo
+
+# Runtime / logs
+.runtime/
+
+# Dados de processamento (gerados em execução)
+PGC/LGM/*/
+PGC/LGM/descontos-historico.json
+PGC/LGM/descontos-saldo.json
+PGC/SPORTS/*/
+apps/api/artifacts/lgm/*/
+apps/api/artifacts/sports/*/
+requests/*/
+
+# Backups locais
+backups/

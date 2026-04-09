@@ -1,0 +1,106 @@
+CHECKLIST FINAL DE PARIDADE - PROMPT2
+Data: 2026-03-13
+Base de referencia: docs/prompt2.txt
+
+ETAPA 1 - MAPEAMENTO E PLANO TECNICO
+[OK] Leitura integral de docs/prompt2.txt
+[OK] Mapeamento de gaps no novo sistema
+[OK] Definicao de ordem tecnica por fases
+
+ETAPA 2 - FASE 1 E FASE 2
+
+FASE 1 - Dominio e dados
+[OK] Evolucao de schema Prisma para Credor/Grupo/EmpresaPagadora/Rendimento/HistoricoPGC/EmailLog
+[OK] Migration aplicada: 20260313122207_fase1_domain_data
+[OK] Prisma Client regenerado
+
+FASE 2 - CRUDs e telas administrativas
+[OK] Backend CRUD Grupos
+[OK] Backend CRUD Empresas Pagadoras
+[OK] Backend CRUD Credores com filtros, paginacao, ordenacao e acoes em lote
+[OK] Backend CRUD Rendimentos com parse monetario BR
+[OK] Backend CRUD HistoricoPGC (list/get/update/delete)
+[OK] Sync automatico Rendimentos -> HistoricoPGC
+[OK] Exportacao Credores CSV/XLSX
+[OK] Dashboard de envio endpoint (totais, por PGC, listas)
+[OK] Upload de e-mails endpoint (CSV/XLSX, validacao de grupo)
+[OK] Telas web: /dashboard, /credores, /credores/[id], /upload-emails
+
+Evidencias da etapa 2
+[OK] Build monorepo concluido
+[OK] Smoke test API (grupo, credor, rendimento, historico, dashboard)
+[OK] Rotas web novas respondendo 200
+
+ETAPA 3 - FASE 3 E FASE 4
+
+FASE 3 - Pipeline de negocio
+[REMOVIDO] Endpoint legado sincrono: POST /uploads/pgc?numero_pgc= (decisao de produto)
+[OK] Deteccao de aba BASE
+[OK] Criacao/atualizacao de Credor + Rendimento + HistoricoPGC no processamento
+[OK] Geracao de pasta por credor em uppercase
+[OK] Geracao de arquivo por credor em XLSX
+[OK] Geracao de MINIMO.xlsx consolidado
+[OK] Geracao de progress.json, errors.json, credores.json
+[OK] Regras avancadas de MINIMO com mapeamento AG/AO/AP e lookup de CNPJ externo
+[OK] Regras avancadas de DESCONTOS.xlsx por credor normalizado
+
+FASE 4 - Comunicacao e rastreio
+[OK] Endpoints de template de e-mail (GET/PUT /emails/template)
+[OK] Envio em lote por filtros basicos (POST /emails/enviar)
+[OK] Envio individual (POST /emails/enviar/:credorId)
+[OK] Relatorio de envio (GET /emails/relatorio)
+[OK] Atualizacao de EmailLog por tentativa (status, attempts, timestamps, erro)
+[OK] Atualizacao do status enviado/data_envio no credor
+[OK] Falha isolada por credor no lote
+[OK] Tela web /enviar-emails com filtros, template e relatorio
+[OK] Injetar info_minimo/info_descontos a partir de regras completas do legado
+
+ETAPA 4 - FASE 5 E FASE 6
+
+FASE 5 - Exportacoes e acabamento
+[OK] Exportacao CSV de credores
+[OK] Exportacao XLSX de credores
+[OK] PDF completo por credor
+[OK] PDF individual por rendimento
+[OK] ZIP de PDFs em lote
+[OK] Acao abrir pasta local do credor no Windows
+[OK] Geracao de ZIP final completo por fluxo Sports/LGM
+
+FASE 6 - Hardening
+[OK] Build de todos workspaces
+[OK] Smoke tests funcionais principais executados
+[PARCIAL] Suite de regressao automatizada (unit/integration/e2e/load) ainda pendente
+
+CRITERIOS DE ACEITE (prompt2)
+1) Todas as telas listadas acessiveis e funcionais
+[PARCIAL] Entregues: Home, Dashboard, Credores, Upload Emails, Enviar Emails, Jobs
+[OK] Laghetto Sports dedicado com upload, status, logs e download final
+[OK] LGM avancada com endpoints errors.json/credores.json e resolucao de erros por credor
+[OK] Auth completo (signup/login/logout/reset/change)
+
+2) Filtros e acoes em lote
+[OK] Credores: filtros + lote (marcar enviado/nao enviado/excluir)
+[PARCIAL] Filtros/acoes especificas de telas ainda nao implementadas em 100%
+
+3) Upload PGC com artefatos por credor
+[REMOVIDO] Fluxo descontinuado por decisao de produto; foco em Laghetto Sports e LGM
+
+4) Envio email com minimo/descontos dinamicos e templates
+[OK] Template completo + envio e log com minimo/descontos dinamicos completos
+
+5) Historico e logs com auditoria
+[OK] Historico e EmailLog com rastreio por tentativa e consulta
+
+6) Exportacoes CSV/XLSX/PDF/ZIP
+[OK] Implementadas no backend
+
+7) Autenticacao de usuario
+[OK] signup/login/logout/password change/password reset implementados
+
+8) Resiliencia por credor e monitoramento
+[OK] Mantido no pipeline async existente
+[OK] Snapshot local progress/errors/credores no fluxo sincrono legado
+
+RESULTADO GERAL
+- Paridade funcional avancou substancialmente e cobre os blocos principais de dominio, CRUD, dashboard, upload e exportacoes.
+- Ainda existem refinamentos de paridade visual/acoes em lote da UI legada pendentes.

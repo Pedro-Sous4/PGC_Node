@@ -1,0 +1,1812 @@
+import { Worker } from 'bullmq';
+import { promises as fs } from 'fs';
+import * as path from 'path';
+import JSZip from 'jszip';
+import * as XLSX from 'xlsx';
+import { isJobCanceled, postProgress } from '../clients/api.client';
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(`${label}_TIMEOUT`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+async function shouldStop(requestId: string): Promise<boolean> {
+  return isJobCanceled(requestId);
+}
+
+async function reportProgress(
+  requestId: string,
+  payload: Parameters<typeof postProgress>[1],
+): Promise<void> {
+  try {
+    await postProgress(requestId, payload);
+  } catch {
+    // Progress reporting is best-effort and must not fail the whole processing.
+  }
+}
+
+async function yieldToEventLoop(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+async function withProgressHeartbeat<T>(
+  requestId: string,
+  payload: { stage: string; percent: number; currentCredor?: string },
+  work: () => Promise<T>,
+  intervalMs = Number(process.env.PROGRESS_HEARTBEAT_MS ?? 12_000),
+): Promise<T> {
+  let stopped = false;
+  let posting = false;
+
+  const tick = async () => {
+    if (stopped || posting) return;
+    posting = true;
+    try {
+      await postProgress(requestId, {
+        stage: payload.stage,
+        percent: payload.percent,
+        status: 'PROCESSING',
+        currentCredor: payload.currentCredor,
+      });
+    } catch {
+      // Heartbeat is best-effort. Main processing must continue.
+    } finally {
+      posting = false;
+    }
+  };
+
+  const timer = setInterval(() => {
+    void tick();
+  }, intervalMs);
+
+  try {
+    await tick();
+    return await work();
+  } finally {
+    stopped = true;
+    clearInterval(timer);
+  }
+}
+
+type RowRecord = Record<string, string>;
+
+type ParsedSheet = {
+  records: RowRecord[];
+  headers: string[];
+  credorColumn?: string;
+  cnpjColumn?: string;
+};
+
+type MinimoRecord = {
+  credor: string;
+  empresa: string;
+  cnpj: string;
+  minimo: number;
+  desconto: number;
+  total: number;
+};
+
+type DiscountLedgerEntry = {
+  empresa: string;
+  descontoAtual: number;
+  carryoverAnterior: number;
+  aplicadoNoPgc: number;
+  saldoProximoPgc: number;
+  observacao: string;
+};
+
+type SheetValue = string | number;
+type SheetRecord = Record<string, SheetValue>;
+
+type DiscountHistoryState = Map<string, number>;
+
+type DiscountHistoryLogEntry = {
+  createdAt: string;
+  requestId: string;
+  numeroPgc: string;
+  credorSlug: string;
+  credorName: string;
+  empresa: string;
+  descontoAtual: number;
+  carryoverAnterior: number;
+  aplicadoNoPgc: number;
+  saldoProximoPgc: number;
+};
+
+function normalizeText(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function toSlug(value: unknown): string {
+  return normalizeText(stripCredorLeadingCode(value)).replace(/\s+/g, '-');
+}
+
+function toDisplayText(value: unknown): string {
+  return String(value ?? '').replace(/\s+/g, ' ').trim();
+}
+
+function stripCredorLeadingCode(value: unknown): string {
+  const text = toDisplayText(value);
+  return text
+    .replace(/^\d+\s*[-–—.:)_]*\s*/u, '')
+    .replace(/\s*\([^)]*\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toCredorDisplayName(value: unknown): string {
+  const cleaned = stripCredorLeadingCode(value);
+  if (!cleaned) return '';
+
+  const lowered = cleaned.toLowerCase();
+  return lowered
+    .split(' ')
+    .map((part) => (part ? part.charAt(0).toUpperCase() + part.slice(1) : part))
+    .join(' ')
+    .trim();
+}
+
+function normalizeEmpresaKey(value: unknown): string {
+  const text = toDisplayText(value)
+    .replace(/^\d+\s*[-–—.:)_]*\s*/u, '')
+    .replace(/\s*\([^)]*\)/g, '')
+    .trim();
+  return normalizeText(text);
+}
+
+function resolveCnpjForEmpresa(empresa: string, empresaCnpjMap: Map<string, string>): string {
+  const rawKey = empresa.toUpperCase();
+  const exact = empresaCnpjMap.get(rawKey);
+  if (exact) return exact;
+
+  const canonical = normalizeEmpresaKey(empresa);
+  if (!canonical) return '';
+
+  const aliases = new Map<string, string>([
+    ['riserva dos vinhedos incorporadora spe ltda', 'reserva dos vinhedos incorporadora spe ltda'],
+  ]);
+  const canonicalResolved = aliases.get(canonical) ?? canonical;
+
+  for (const [key, cnpj] of empresaCnpjMap.entries()) {
+    const keyCanonical = normalizeEmpresaKey(key);
+    if (!keyCanonical) continue;
+    const keyResolved = aliases.get(keyCanonical) ?? keyCanonical;
+    if (keyResolved === canonicalResolved) return cnpj;
+    if (keyResolved.includes(canonicalResolved) || canonicalResolved.includes(keyResolved)) return cnpj;
+  }
+
+  return '';
+}
+
+function parseNumber(value: unknown): number {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+
+  let normalized = raw.replace(/\s/g, '');
+  normalized = normalized.replace(/[^0-9,.-]/g, '');
+
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+
+  if (hasComma && hasDot) {
+    // Decide decimal separator by the last separator in the token.
+    const lastComma = normalized.lastIndexOf(',');
+    const lastDot = normalized.lastIndexOf('.');
+    const decimalSep = lastComma > lastDot ? ',' : '.';
+    const thousandSep = decimalSep === ',' ? '.' : ',';
+
+    normalized = normalized.split(thousandSep).join('');
+    if (decimalSep === ',') {
+      normalized = normalized.replace(',', '.');
+    }
+  } else if (hasDot) {
+    // Heuristic for thousands with dot (e.g. "1.275" => 1275), while
+    // preserving decimals (e.g. "1.28" => 1.28).
+    const parts = normalized.split('.');
+    const hasMultipleDots = parts.length > 2;
+    const looksLikeThousands = hasMultipleDots || (parts.length === 2 && /^\d{3}$/.test(parts[1]));
+    if (looksLikeThousands) {
+      normalized = normalized.replace(/\./g, '');
+    }
+  } else if (hasComma) {
+    // Heuristic for thousands with comma (e.g. "1,275" => 1275), while
+    // preserving decimals (e.g. "1,28" => 1.28).
+    const parts = normalized.split(',');
+    const hasMultipleCommas = parts.length > 2;
+    const looksLikeThousands = hasMultipleCommas || (parts.length === 2 && /^\d{3}$/.test(parts[1]));
+    if (looksLikeThousands) {
+      normalized = normalized.replace(/,/g, '');
+    } else {
+      normalized = normalized.replace(',', '.');
+    }
+  }
+
+  normalized = normalized.replace(/[^0-9.-]/g, '');
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function normalizeDocument(value: unknown): string {
+  const raw = toDisplayText(value);
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 11 || digits.length === 14) {
+    return raw;
+  }
+  return '';
+}
+
+function formatMoneyBR(value: number): string {
+  const safeValue = Number.isFinite(value) ? value : 0;
+  const signal = safeValue < 0 ? '-' : '';
+  const absolute = Math.abs(safeValue);
+  const [integerPart, decimalPart] = absolute.toFixed(2).split('.');
+  const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${signal}R$ ${groupedInteger},${decimalPart}`;
+}
+
+function isMoneyColumn(header: string): boolean {
+  const normalized = normalizeText(header);
+  return /(valor|total|minimo|desconto|liquido|bruto|saldo)/.test(normalized);
+}
+
+function normalizeCurrencyColumns(rows: RowRecord[]): SheetRecord[] {
+  return rows.map((row) => {
+    const formatted: SheetRecord = {};
+
+    for (const [key, value] of Object.entries(row)) {
+      const text = toDisplayText(value);
+      if (!text || !isMoneyColumn(key)) {
+        formatted[key] = value;
+        continue;
+      }
+
+      formatted[key] = parseNumber(text);
+    }
+
+    return formatted;
+  });
+}
+
+const EXCEL_CURRENCY_FORMAT = '[$R$-416] #,##0.00';
+
+function applyCurrencyFormatByHeaders(worksheet: XLSX.WorkSheet, headers: string[]): void {
+  const ref = worksheet['!ref'];
+  if (!ref) return;
+
+  const range = XLSX.utils.decode_range(ref);
+  if (range.e.r < 1) return;
+
+  const moneyColumns = new Set<number>();
+  for (let col = range.s.c; col <= range.e.c; col += 1) {
+    const cellAddress = XLSX.utils.encode_cell({ r: range.s.r, c: col });
+    const headerValue = String(worksheet[cellAddress]?.v ?? headers[col - range.s.c] ?? '').trim();
+    if (isMoneyColumn(headerValue)) {
+      moneyColumns.add(col);
+    }
+  }
+
+  for (let row = range.s.r + 1; row <= range.e.r; row += 1) {
+    for (const col of moneyColumns) {
+      const address = XLSX.utils.encode_cell({ r: row, c: col });
+      const cell = worksheet[address];
+      if (!cell) continue;
+
+      if (cell.t !== 'n') {
+        const numeric = parseNumber(cell.v);
+        cell.t = 'n';
+        cell.v = numeric;
+      }
+
+      cell.z = EXCEL_CURRENCY_FORMAT;
+    }
+  }
+}
+
+function resolveWorkspaceRoot(): string {
+  const cwd = process.cwd();
+  const parent = path.dirname(cwd);
+  const grandParent = path.dirname(parent);
+
+  if (path.basename(cwd) === 'worker' && path.basename(parent) === 'apps') {
+    return grandParent;
+  }
+
+  return cwd;
+}
+
+function buildDiscountHistoryKey(credorSlug: string, empresa: string): string {
+  return `${credorSlug}::${normalizeEmpresaKey(empresa)}`;
+}
+
+function resolveDiscountHistoryFiles(): { saldoFilePath: string; logFilePath: string } {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const baseDir = path.join(workspaceRoot, 'PGC', 'LGM');
+  return {
+    saldoFilePath: path.join(baseDir, 'descontos-saldo.json'),
+    logFilePath: path.join(baseDir, 'descontos-historico.json'),
+  };
+}
+
+async function loadDiscountHistoryState(): Promise<DiscountHistoryState> {
+  const { saldoFilePath } = resolveDiscountHistoryFiles();
+  const map: DiscountHistoryState = new Map();
+
+  const exists = await fs
+    .stat(saldoFilePath)
+    .then((st) => st.isFile())
+    .catch(() => false);
+  if (!exists) return map;
+
+  try {
+    const raw = await fs.readFile(saldoFilePath, 'utf8');
+    const parsed = JSON.parse(raw) as Record<string, number>;
+    for (const [key, value] of Object.entries(parsed)) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) continue;
+
+      const [credorSlugRaw, empresaRaw] = String(key).split('::');
+      if (!credorSlugRaw || !empresaRaw) continue;
+
+      const normalizedKey = buildDiscountHistoryKey(credorSlugRaw, empresaRaw);
+      if (!normalizedKey.endsWith('::')) {
+        map.set(normalizedKey, Number(numeric.toFixed(2)));
+      }
+    }
+  } catch {
+    // Ignore malformed file and continue with empty state.
+  }
+
+  return map;
+}
+
+async function persistDiscountHistoryState(state: DiscountHistoryState): Promise<void> {
+  const { saldoFilePath } = resolveDiscountHistoryFiles();
+  await fs.mkdir(path.dirname(saldoFilePath), { recursive: true });
+
+  const serialized: Record<string, number> = {};
+  for (const [key, value] of state.entries()) {
+    if (value > 0) {
+      serialized[key] = Number(value.toFixed(2));
+    }
+  }
+
+  await fs.writeFile(saldoFilePath, JSON.stringify(serialized, null, 2), 'utf8');
+}
+
+async function appendDiscountHistoryLog(entries: DiscountHistoryLogEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+
+  const { logFilePath } = resolveDiscountHistoryFiles();
+  await fs.mkdir(path.dirname(logFilePath), { recursive: true });
+
+  const existing = await fs
+    .readFile(logFilePath, 'utf8')
+    .then((raw) => {
+      const parsed = JSON.parse(raw) as DiscountHistoryLogEntry[];
+      return Array.isArray(parsed) ? parsed : [];
+    })
+    .catch(() => [] as DiscountHistoryLogEntry[]);
+
+  existing.push(...entries);
+  await fs.writeFile(logFilePath, JSON.stringify(existing, null, 2), 'utf8');
+}
+
+function applyDiscountsForCredor(
+  credorSlug: string,
+  minimoRows: MinimoRecord[],
+  historyState: DiscountHistoryState,
+  baseRows: RowRecord[],
+  baseHeaders: string[],
+): { adjustedRows: MinimoRecord[]; ledger: DiscountLedgerEntry[] } {
+  if (minimoRows.length === 0) {
+    return { adjustedRows: minimoRows, ledger: [] };
+  }
+
+  const adjustedRows: MinimoRecord[] = minimoRows.map((row) => ({
+    ...row,
+    desconto: 0,
+    total: row.minimo,
+  }));
+
+  const companies = new Set<string>();
+  const displayCompanyByKey = new Map<string, string>();
+  const currentDiscountByCompany = new Map<string, number>();
+  const availableByCompany = new Map<string, number>();
+
+  for (const original of minimoRows) {
+    const companyDisplay = (original.empresa || '').trim();
+    const company = normalizeEmpresaKey(companyDisplay);
+    if (!company) continue;
+
+    companies.add(company);
+    if (!displayCompanyByKey.has(company)) {
+      displayCompanyByKey.set(company, companyDisplay || original.empresa);
+    }
+    availableByCompany.set(company, (availableByCompany.get(company) ?? 0) + Math.max(0, original.minimo));
+
+    const currentDiscount = Math.abs(Number(original.desconto ?? 0));
+    if (currentDiscount > 0) {
+      currentDiscountByCompany.set(company, (currentDiscountByCompany.get(company) ?? 0) + currentDiscount);
+    }
+  }
+
+  const totalAvailableFromMinimo = Array.from(availableByCompany.values()).reduce((acc, value) => acc + value, 0);
+  if (totalAvailableFromMinimo <= 0) {
+    const empresaColumns = baseHeaders.filter((header) => /empresa/.test(normalizeText(header)));
+    const valorColumns = baseHeaders.filter((header) => /valor original|^valor$|valor|total geral/.test(normalizeText(header)));
+
+    if (empresaColumns.length > 0 && valorColumns.length > 0) {
+      for (const row of baseRows) {
+        const empresaRaw = empresaColumns.map((header) => toDisplayText(row[header])).find((value) => value !== '');
+        if (!empresaRaw) continue;
+
+        const company = normalizeEmpresaKey(empresaRaw);
+        if (!company) continue;
+
+        const valorRaw = valorColumns.map((header) => row[header]).find((value) => parseNumber(value) > 0);
+        const valor = Math.max(0, parseNumber(valorRaw));
+        if (valor <= 0) continue;
+
+        companies.add(company);
+        if (!displayCompanyByKey.has(company)) {
+          displayCompanyByKey.set(company, empresaRaw);
+        }
+        availableByCompany.set(company, Number(((availableByCompany.get(company) ?? 0) + valor).toFixed(2)));
+      }
+    }
+  }
+
+  if (String(process.env.DEBUG_DISCOUNT_CALC ?? '').toLowerCase() === 'true') {
+    // eslint-disable-next-line no-console
+    console.info(
+      '[discount-debug-base]',
+      JSON.stringify({
+        credorSlug,
+        minimoRowsCount: minimoRows.length,
+        baseRowsCount: baseRows.length,
+        baseHeaders,
+        availableByCompany: Object.fromEntries(availableByCompany.entries()),
+        currentDiscountByCompany: Object.fromEntries(currentDiscountByCompany.entries()),
+      }),
+    );
+  }
+
+  for (const key of historyState.keys()) {
+    if (!key.startsWith(`${credorSlug}::`)) continue;
+    const company = normalizeEmpresaKey(key.slice(`${credorSlug}::`.length));
+    if (company) companies.add(company);
+  }
+
+  const ledger: DiscountLedgerEntry[] = [];
+
+  for (const company of companies) {
+    const historyKey = buildDiscountHistoryKey(credorSlug, company);
+    const carryoverAnterior = historyState.get(historyKey) ?? 0;
+    const descontoAtual = currentDiscountByCompany.get(company) ?? 0;
+    const demandaTotal = Number((descontoAtual + carryoverAnterior).toFixed(2));
+
+    if (demandaTotal <= 0) {
+      historyState.delete(historyKey);
+      continue;
+    }
+
+    const saldoDisponivel = Number((availableByCompany.get(company) ?? 0).toFixed(2));
+    let aplicadoNoPgc = Number(Math.min(demandaTotal, saldoDisponivel).toFixed(2));
+    const aplicadoPlanejado = aplicadoNoPgc;
+    let restanteAplicar = aplicadoNoPgc;
+
+    if (String(process.env.DEBUG_DISCOUNT_CALC ?? '').toLowerCase() === 'true') {
+      // eslint-disable-next-line no-console
+      console.info(
+        '[discount-debug]',
+        JSON.stringify({
+          credorSlug,
+          company,
+          descontoAtual,
+          carryoverAnterior,
+          demandaTotal,
+          saldoDisponivel,
+          aplicadoNoPgc,
+        }),
+      );
+    }
+
+    for (const row of adjustedRows) {
+      if (normalizeEmpresaKey(row.empresa) !== company || restanteAplicar <= 0) continue;
+      const descontoLinha = Number(Math.min(row.total, restanteAplicar).toFixed(2));
+      if (descontoLinha <= 0) continue;
+
+      row.desconto = Number((row.desconto + descontoLinha).toFixed(2));
+      row.total = Number((row.total - descontoLinha).toFixed(2));
+      restanteAplicar = Number((restanteAplicar - descontoLinha).toFixed(2));
+    }
+
+    const aplicadoDistribuido = Number((aplicadoNoPgc - Math.max(0, restanteAplicar)).toFixed(2));
+    const semDistribuicaoPorLinha = aplicadoDistribuido <= 0 && aplicadoPlanejado > 0;
+    aplicadoNoPgc =
+      totalAvailableFromMinimo <= 0 && semDistribuicaoPorLinha ? aplicadoPlanejado : aplicadoDistribuido;
+    const saldoProximoPgc = Number(Math.max(0, demandaTotal - aplicadoNoPgc).toFixed(2));
+
+    if (saldoProximoPgc > 0) {
+      historyState.set(historyKey, saldoProximoPgc);
+    } else {
+      historyState.delete(historyKey);
+    }
+
+    ledger.push({
+      empresa: displayCompanyByKey.get(company) ?? company,
+      descontoAtual,
+      carryoverAnterior,
+      aplicadoNoPgc,
+      saldoProximoPgc,
+      observacao:
+        saldoProximoPgc > 0
+          ? 'Saldo insuficiente na empresa; diferenca mantida para proximo PGC.'
+          : 'Desconto aplicado integralmente no PGC atual.',
+    });
+  }
+
+  return { adjustedRows, ledger };
+}
+
+async function listExcelFiles(dirPath: string): Promise<string[]> {
+  try {
+    const entries = await fs.readdir(dirPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /\.(xlsx|xlsm|xls)$/i.test(name))
+      .map((name) => path.join(dirPath, name));
+  } catch {
+    return [];
+  }
+}
+
+const DEFAULT_EMPRESA_CNPJ: Array<{ empresa: string; cnpj: string }> = [
+  { empresa: 'RESERVA DOS VINHEDOS INCORPORADORA SPE LTDA', cnpj: '34.028.040/0003-25' },
+  { empresa: 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '40.024.035/0001-85' },
+  { empresa: 'LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS', cnpj: '48.896.217/0024-44' },
+  { empresa: 'GVP PARTICIPACOES E INVESTIMENTOS LTDA', cnpj: '17.991.041/0001-90' },
+  { empresa: 'GOLDEN LAGHETTO EMPREENDIMENTOS IMOBILIARIOS SPE LTD', cnpj: '23.585.934/0003-08' },
+  { empresa: 'ATHIVABRASIL EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '08.705.893/0001-82' },
+  { empresa: 'CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '30.145.972/0002-16' },
+  { empresa: 'ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '30.182.622/0004-91' },
+  { empresa: 'LGM PARTICIPACOES LTDA | FILIAL BORGES', cnpj: '48.896.217/0004-09' },
+  { empresa: 'LSRG RESORT SPE LTDA SCP', cnpj: '49.850.335/0001-98' },
+  { empresa: 'SCI RESORT SPE LTDA SCP', cnpj: '49.729.088/0001-76' },
+  { empresa: 'JPZ EMPREENDIMENTOS LTDA', cnpj: '48.896.217/0024-44' },
+];
+
+async function loadEmpresaCnpjMap(baseDir: string): Promise<Map<string, string>> {
+  const map = new Map<string, string>(
+    DEFAULT_EMPRESA_CNPJ.map((item) => [item.empresa.toUpperCase(), item.cnpj]),
+  );
+  const workspaceRoot = resolveWorkspaceRoot();
+
+  const settingsCandidates = [
+    path.join(workspaceRoot, 'apps', 'api', '.runtime', 'system-settings.json'),
+    path.join(path.dirname(baseDir), '.runtime', 'system-settings.json'),
+  ];
+
+  for (const settingsPath of settingsCandidates) {
+    try {
+      const content = await fs.readFile(settingsPath, 'utf8');
+      const parsed = JSON.parse(content) as {
+        empresasCnpj?: Array<{ empresa?: string; cnpj?: string }>;
+      };
+
+      for (const item of parsed.empresasCnpj ?? []) {
+        const empresa = toDisplayText(item.empresa);
+        const cnpj = toDisplayText(item.cnpj);
+        if (!empresa || !cnpj) continue;
+        const key = empresa.toUpperCase();
+        if (!map.has(key)) {
+          map.set(key, cnpj);
+        }
+      }
+    } catch {
+      // Ignore malformed/missing settings and continue with other sources.
+    }
+  }
+
+  const candidates = [
+    path.join(baseDir, 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
+    path.join(path.dirname(baseDir), 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
+    path.join(workspaceRoot, 'artifacts', 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
+    path.join(workspaceRoot, 'apps', 'api', 'artifacts', 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
+  ];
+
+  let filePath: string | null = null;
+  for (const candidate of candidates) {
+    const exists = await fs
+      .stat(candidate)
+      .then((st) => st.isFile())
+      .catch(() => false);
+    if (exists) {
+      filePath = candidate;
+      break;
+    }
+  }
+
+  if (!filePath) return map;
+
+  const wb = XLSX.readFile(filePath);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+
+  for (const row of rows) {
+    const nomeCurto = toDisplayText(row.nome_curto ?? row.NOME_CURTO ?? row.empresa ?? row.EMPRESA);
+    const cnpj = toDisplayText(row.cnpj ?? row.CNPJ);
+    if (!nomeCurto || !cnpj) continue;
+    const key = nomeCurto.toUpperCase();
+    if (!map.has(key)) {
+      map.set(key, cnpj);
+    }
+  }
+
+  return map;
+}
+
+async function resolveInputWorkbook(requestId: string, flow?: string): Promise<string> {
+  const workspaceRoot = resolveWorkspaceRoot();
+  const normalizedFlow = String(flow ?? '').toLowerCase();
+
+  const sportsCandidates = [
+    path.join(workspaceRoot, 'artifacts', 'sports', requestId),
+    path.join(workspaceRoot, 'apps', 'api', 'artifacts', 'sports', requestId),
+  ];
+
+  const lgmCandidates = [
+    path.join(workspaceRoot, 'artifacts', 'lgm', requestId),
+    path.join(workspaceRoot, 'apps', 'api', 'artifacts', 'lgm', requestId),
+  ];
+
+  const candidates =
+    normalizedFlow === 'lgm'
+      ? [...lgmCandidates, ...sportsCandidates]
+      : normalizedFlow === 'laghetto-sports'
+        ? [...sportsCandidates, ...lgmCandidates]
+        : [...sportsCandidates, ...lgmCandidates];
+
+  for (const folder of candidates) {
+    const files = await listExcelFiles(folder);
+    if (files.length === 0) continue;
+
+    const withStats = await Promise.all(
+      files.map(async (filePath) => ({
+        filePath,
+        stat: await fs.stat(filePath),
+      })),
+    );
+
+    withStats.sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs);
+    return withStats[0].filePath;
+  }
+
+  throw new Error('INPUT_WORKBOOK_NOT_FOUND');
+}
+
+function findSheetName(sheetNames: string[], matcher: RegExp): string | undefined {
+  return sheetNames.find((name) => matcher.test(normalizeText(name)));
+}
+
+function extractPgcNumber(sheetName: string, fileName: string): string {
+  const fromSheet = sheetName.match(/pgc\s*[-_ ]?(\d{1,6})/i)?.[1];
+  if (fromSheet) return fromSheet;
+
+  const fromFile = fileName.match(/pgc\s*[-_ ]?(\d{1,6})/i)?.[1];
+  return fromFile ?? '0000';
+}
+
+function buildUniqueHeaders(rawHeader: unknown[]): string[] {
+  const used = new Set<string>();
+  return rawHeader.map((cell, index) => {
+    const base = toDisplayText(cell) || `COL_${index + 1}`;
+    let candidate = base;
+    let suffix = 2;
+    while (used.has(candidate.toLowerCase())) {
+      candidate = `${base}_${suffix}`;
+      suffix += 1;
+    }
+    used.add(candidate.toLowerCase());
+    return candidate;
+  });
+}
+
+function detectHeaderRow(rows: unknown[][]): number {
+  const limit = Math.min(rows.length, 40);
+  let bestIndex = 0;
+  let bestScore = -1;
+
+  for (let i = 0; i < limit; i += 1) {
+    const row = rows[i] ?? [];
+    const score = row.filter((cell) => toDisplayText(cell) !== '').length;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = i;
+    }
+  }
+
+  return bestIndex;
+}
+
+function detectColumn(headers: string[], patterns: RegExp[]): string | undefined {
+  const normalized = headers.map((header) => ({
+    original: header,
+    normalized: normalizeText(header),
+  }));
+
+  return normalized.find((header) => patterns.some((pattern) => pattern.test(header.normalized)))?.original;
+}
+
+function parseTabularSheet(worksheet: XLSX.WorkSheet): ParsedSheet {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+  }) as unknown[][];
+
+  if (rows.length === 0) {
+    return { records: [], headers: [] };
+  }
+
+  const headerIndex = detectHeaderRow(rows);
+  const headers = buildUniqueHeaders(rows[headerIndex] ?? []);
+  const records: RowRecord[] = [];
+
+  for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? [];
+    const record: RowRecord = {};
+    let nonEmpty = 0;
+
+    for (let col = 0; col < headers.length; col += 1) {
+      const value = toDisplayText(row[col]);
+      record[headers[col]] = value;
+      if (value !== '') nonEmpty += 1;
+    }
+
+    if (nonEmpty > 0) {
+      records.push(record);
+    }
+  }
+
+  const credorColumn = detectColumn(headers, [/\bcredor\b/, /beneficiario/, /favorecido/, /nome/]);
+  const cnpjColumn = detectColumn(headers, [/\bcnpj\b/, /cpf/]);
+
+  return { records, headers, credorColumn, cnpjColumn };
+}
+
+function buildCnpjFallbackMap(base: ParsedSheet): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!base.credorColumn || !base.cnpjColumn) return map;
+
+  for (const row of base.records) {
+    const credor = row[base.credorColumn];
+    const cnpj = normalizeDocument(row[base.cnpjColumn]);
+    if (!credor || !cnpj) continue;
+
+    const key = toSlug(credor);
+    if (!key || map.has(key)) continue;
+    map.set(key, cnpj);
+  }
+
+  return map;
+}
+
+function deriveMinimoRecordsFromLegacyLayout(
+  worksheet: XLSX.WorkSheet,
+  cnpjFallback: Map<string, string>,
+  empresaCnpjMap: Map<string, string>,
+): MinimoRecord[] {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+  }) as unknown[][];
+
+  const records: MinimoRecord[] = [];
+  if (rows.length < 8) return records;
+
+  const headerRowAIndex = rows.findIndex((row, idx) => {
+    if (idx > 20) return false;
+    const normalized = (row ?? []).map((cell) => normalizeText(cell)).filter(Boolean);
+    return (
+      normalized.some((value) => value.includes('descontos')) &&
+      normalized.some((value) => value.includes('empresa desconto'))
+    );
+  });
+
+  if (headerRowAIndex < 0 || headerRowAIndex + 1 >= rows.length) return records;
+
+  const headerRowBIndex = headerRowAIndex + 1;
+  const dataStartIndex = headerRowBIndex + 1;
+
+  const headerRowA = rows[headerRowAIndex] ?? [];
+  const headerRowB = rows[headerRowBIndex] ?? [];
+  const maxCols = Math.max(headerRowA.length, headerRowB.length);
+
+  const headerAt = (col: number): string =>
+    normalizeText(`${toDisplayText(headerRowA[col])} ${toDisplayText(headerRowB[col])}`);
+
+  const findColumnIndex = (patterns: RegExp[]): number => {
+    for (let col = 0; col < maxCols; col += 1) {
+      const header = headerAt(col);
+      if (!header) continue;
+      if (patterns.some((pattern) => pattern.test(header))) return col;
+    }
+    return -1;
+  };
+
+  const findLastColumnIndex = (patterns: RegExp[]): number => {
+    let found = -1;
+    for (let col = 0; col < maxCols; col += 1) {
+      const header = headerAt(col);
+      if (!header) continue;
+      if (patterns.some((pattern) => pattern.test(header))) {
+        found = col;
+      }
+    }
+    return found;
+  };
+
+  const colCredor = findLastColumnIndex([/\bcredor\b/]);
+  const colMinimo = findLastColumnIndex([/minimo/, /fixo/]);
+  const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/]);
+  const colCnpj = findLastColumnIndex([/\bcnpj\b/]);
+
+  const descontoPairs: Array<{ descontoCol: number; empresaCol: number }> = [];
+  for (let col = 0; col < maxCols - 1; col += 1) {
+    const currentHeader = headerAt(col);
+    const nextHeader = headerAt(col + 1);
+
+    const isDescontoCol = /\boutros\s*descontos\b|\bdescontos\b/.test(currentHeader);
+    const isEmpresaDescontoCol = /empresa\s*desconto/.test(nextHeader);
+    if (isDescontoCol && isEmpresaDescontoCol) {
+      descontoPairs.push({ descontoCol: col, empresaCol: col + 1 });
+      col += 1;
+    }
+  }
+
+  if (colCredor < 0) return records;
+
+  // Dados começam na linha imediatamente após os dois cabeçalhos identificados.
+  for (let rowIndex = dataStartIndex; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? [];
+    const credor = toCredorDisplayName(row[colCredor]);
+    if (!credor) continue;
+
+    const minimo = colMinimo >= 0 ? parseNumber(row[colMinimo]) : 0;
+    const empresaEmissao = colEmpresaEmissao >= 0 ? toDisplayText(row[colEmpresaEmissao]) : '';
+    const cnpjFromRow = colCnpj >= 0 ? normalizeDocument(row[colCnpj]) : '';
+    const credorSlug = toSlug(credor);
+    const cnpjByCredor = cnpjFallback.get(credorSlug) ?? '';
+
+    if (minimo > 0 || empresaEmissao) {
+      const cnpjByEmpresa = empresaEmissao ? resolveCnpjForEmpresa(empresaEmissao, empresaCnpjMap) : '';
+      records.push({
+        credor,
+        empresa: empresaEmissao,
+        cnpj: cnpjFromRow || cnpjByCredor || cnpjByEmpresa || '',
+        minimo,
+        desconto: 0,
+        total: minimo,
+      });
+    }
+
+    for (const pair of descontoPairs) {
+      const descontoValue = Math.abs(parseNumber(row[pair.descontoCol]));
+      const empresaDesconto = toDisplayText(row[pair.empresaCol]);
+      if (!empresaDesconto || descontoValue <= 0) continue;
+
+      const cnpjByEmpresaDesconto = resolveCnpjForEmpresa(empresaDesconto, empresaCnpjMap);
+      records.push({
+        credor,
+        empresa: empresaDesconto,
+        cnpj: cnpjByCredor || cnpjByEmpresaDesconto || '',
+        minimo: 0,
+        desconto: descontoValue,
+        total: descontoValue,
+      });
+    }
+  }
+
+  return records;
+}
+
+function deriveMinimoRecordsFromPivotLayout(
+  worksheet: XLSX.WorkSheet,
+  cnpjFallback: Map<string, string>,
+  empresaCnpjMap: Map<string, string>,
+): MinimoRecord[] {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+  }) as unknown[][];
+
+  const records: MinimoRecord[] = [];
+  const headerIndex = rows.findIndex((row) => {
+    const normalized = (row ?? []).map((cell) => normalizeText(cell));
+    return normalized.includes('credor') && normalized.some((value) => value.includes('total geral'));
+  });
+
+  if (headerIndex < 0) return records;
+
+  const headerRow = rows[headerIndex] ?? [];
+  const totalIndex = headerRow.findIndex((cell) => normalizeText(cell).includes('total geral'));
+  if (totalIndex <= 1) return records;
+
+  const empresaColumns: Array<{ index: number; empresa: string }> = [];
+  for (let col = 1; col < totalIndex; col += 1) {
+    const empresa = toDisplayText(headerRow[col]);
+    if (!empresa) continue;
+    empresaColumns.push({ index: col, empresa });
+  }
+
+  for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex] ?? [];
+    const credorRaw = toDisplayText(row[0]);
+    if (!credorRaw) continue;
+    if (normalizeText(credorRaw).includes('total geral')) continue;
+
+    const credor = toCredorDisplayName(credorRaw);
+    if (!credor) continue;
+
+    const credorSlug = toSlug(credor);
+    const cnpjByCredor = cnpjFallback.get(credorSlug) ?? '';
+
+    for (const column of empresaColumns) {
+      const value = parseNumber(row[column.index]);
+      if (value === 0) continue;
+
+      const cnpjByEmpresa = resolveCnpjForEmpresa(column.empresa, empresaCnpjMap);
+      records.push({
+        credor,
+        empresa: column.empresa,
+        cnpj: cnpjByCredor || cnpjByEmpresa || '',
+        minimo: value,
+        desconto: 0,
+        total: value,
+      });
+    }
+  }
+
+  return records;
+}
+
+function deriveMinimoRecords(
+  worksheet: XLSX.WorkSheet,
+  cnpjFallback: Map<string, string>,
+  empresaCnpjMap: Map<string, string>,
+): MinimoRecord[] {
+  const legacy = deriveMinimoRecordsFromLegacyLayout(worksheet, cnpjFallback, empresaCnpjMap);
+  const pivot = deriveMinimoRecordsFromPivotLayout(worksheet, cnpjFallback, empresaCnpjMap);
+
+  const legacyHasExplicitDiscount = legacy.some((row) => Number(row.desconto ?? 0) > 0);
+  if (legacyHasExplicitDiscount) return legacy;
+
+  if (pivot.length > 0 && legacy.length === 0) return pivot;
+
+  if (legacy.length > 0) return legacy;
+
+  return pivot;
+}
+
+function filterByCredor(records: RowRecord[], credorColumn: string | undefined, credorSlug: string): RowRecord[] {
+  if (!credorColumn) return [];
+  return records.filter((row) => toSlug(row[credorColumn]) === credorSlug);
+}
+
+function filterMinimoByCredor(records: MinimoRecord[], credorSlug: string): MinimoRecord[] {
+  return records.filter((row) => toSlug(row.credor) === credorSlug);
+}
+
+function safeFilePart(value: string): string {
+  const sanitized = value.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim();
+  return sanitized || 'credor';
+}
+
+function buildUniqueFolderName(baseDir: string, folderName: string, seen: Map<string, number>): string {
+  void baseDir;
+  const current = seen.get(folderName) ?? 0;
+  if (current === 0) {
+    seen.set(folderName, 1);
+    return folderName;
+  }
+
+  let next = current + 1;
+  let candidate = `${folderName} (${next})`;
+  while (seen.has(candidate)) {
+    next += 1;
+    candidate = `${folderName} (${next})`;
+  }
+
+  seen.set(folderName, next);
+  seen.set(candidate, 1);
+  return candidate;
+}
+
+function toSheetFromRecords(rows: RowRecord[]): XLSX.WorkSheet {
+  const normalizedRows = normalizeCurrencyColumns(rows);
+  const worksheet = XLSX.utils.json_to_sheet(normalizedRows, { skipHeader: false });
+  if (normalizedRows.length > 0) {
+    applyCurrencyFormatByHeaders(worksheet, Object.keys(normalizedRows[0]));
+  }
+  return worksheet;
+}
+
+function getFirstExistingColumn(headers: string[], patterns: RegExp[]): string | undefined {
+  return detectColumn(headers, patterns);
+}
+
+function projectRowsByRules(
+  rows: RowRecord[],
+  headers: string[],
+  targetColumns: Array<{ output: string; patterns: RegExp[] }>,
+): RowRecord[] {
+  if (rows.length === 0) return [];
+
+  const bindings = targetColumns.map((item) => ({
+    output: item.output,
+    source: getFirstExistingColumn(headers, item.patterns),
+  }));
+
+  return rows.map((row) => {
+    const projected: RowRecord = {};
+    for (const binding of bindings) {
+      projected[binding.output] = binding.source ? toDisplayText(row[binding.source]) : '';
+    }
+    return projected;
+  });
+}
+
+function toSheetBaseByRules(rows: RowRecord[], headers: string[]): XLSX.WorkSheet {
+  const projected = projectRowsByRules(rows, headers, [
+    { output: 'Empresa', patterns: [/^empresa$/] },
+    { output: 'Credor', patterns: [/^credor$/] },
+    { output: 'Documento', patterns: [/^documento$/] },
+    { output: 'Cliente', patterns: [/^cliente$/] },
+    { output: 'Parcela', patterns: [/^parcela$/] },
+    { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
+    { output: 'Valor original', patterns: [/valor original/] },
+  ]);
+  return toSheetFromRecords(projected);
+}
+
+function toSheetExtratoByRules(rows: RowRecord[], headers: string[]): XLSX.WorkSheet {
+  const projected = projectRowsByRules(rows, headers, [
+    { output: 'Empresa', patterns: [/^empresa$/] },
+    { output: 'Credor', patterns: [/^credor$/] },
+    { output: 'Documento', patterns: [/^documento$/] },
+    { output: 'Cliente', patterns: [/^cliente$/] },
+    { output: 'Parcela', patterns: [/^parcela$/] },
+    { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
+    { output: 'Valor original', patterns: [/valor original/] },
+    { output: 'Dt. vencimento', patterns: [/dt vencimento|data vencimento/] },
+    { output: 'Obs. baixa', patterns: [/obs baixa/] },
+  ]);
+  return toSheetFromRecords(projected);
+}
+
+function toSheetProdutividadeByRules(rows: RowRecord[], headers: string[]): XLSX.WorkSheet {
+  const projected = projectRowsByRules(rows, headers, [
+    { output: 'Empresa', patterns: [/^empresa$/] },
+    { output: 'Credor', patterns: [/^credor$/] },
+    { output: 'Documento', patterns: [/^documento$/] },
+    { output: 'Cliente', patterns: [/^cliente$/] },
+    { output: 'Parcela', patterns: [/^parcela$/] },
+    { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
+    { output: 'Valor original', patterns: [/valor original/] },
+    { output: 'Dt. vencimento', patterns: [/dt vencimento|data vencimento/] },
+  ]);
+  return toSheetFromRecords(projected);
+}
+
+function toSheetFromMinimo(rows: MinimoRecord[]): XLSX.WorkSheet {
+  const normalizedRows: SheetRecord[] = rows.map((row) => ({
+      CREDOR: row.credor,
+      'MINIMO/FIXO': row.minimo,
+      'EMPRESA EMISSAO': row.empresa,
+      CNPJ: row.cnpj,
+      DESCONTO: row.desconto,
+      TOTAL: row.total,
+    }));
+  const worksheet = XLSX.utils.json_to_sheet(normalizedRows, { skipHeader: false });
+  applyCurrencyFormatByHeaders(worksheet, ['CREDOR', 'MINIMO/FIXO', 'EMPRESA EMISSAO', 'CNPJ', 'DESCONTO', 'TOTAL']);
+  return worksheet;
+}
+
+function toSheetFromDescontos(rows: DiscountLedgerEntry[]): XLSX.WorkSheet {
+  const normalizedRows: SheetRecord[] = rows.map((row) => ({
+    EMPRESA: row.empresa,
+    DESCONTO_ATUAL: row.descontoAtual,
+    CARRYOVER_ANTERIOR: row.carryoverAnterior,
+    APLICADO_NO_PGC: row.aplicadoNoPgc,
+    SALDO_PROXIMO_PGC: row.saldoProximoPgc,
+    OBSERVACAO: row.observacao,
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(
+    normalizedRows.length > 0
+      ? normalizedRows
+      : [
+          {
+            EMPRESA: '-',
+            DESCONTO_ATUAL: 0,
+            CARRYOVER_ANTERIOR: 0,
+            APLICADO_NO_PGC: 0,
+            SALDO_PROXIMO_PGC: 0,
+            OBSERVACAO: 'Sem descontos para este credor.',
+          },
+        ],
+  );
+
+  applyCurrencyFormatByHeaders(worksheet, [
+    'EMPRESA',
+    'DESCONTO_ATUAL',
+    'CARRYOVER_ANTERIOR',
+    'APLICADO_NO_PGC',
+    'SALDO_PROXIMO_PGC',
+    'OBSERVACAO',
+  ]);
+
+  return worksheet;
+}
+
+function buildCredorWorkbook(
+  baseRows: RowRecord[],
+  baseHeaders: string[],
+  minimoRows: MinimoRecord[],
+  extratoRows: RowRecord[],
+  extratoHeaders: string[],
+  produtividadeRows: RowRecord[],
+  produtividadeHeaders: string[],
+  descontosRows: DiscountLedgerEntry[],
+): XLSX.WorkBook {
+  void minimoRows;
+  void descontosRows;
+
+  const workbook = XLSX.utils.book_new();
+
+  const baseSheet = toSheetBaseByRules(baseRows, baseHeaders);
+  XLSX.utils.book_append_sheet(workbook, baseSheet, 'BASE');
+
+  // Keep EXTRATO and PRODUTIVIDADE sheets in the same workbook only when source rows exist.
+  if (extratoRows.length > 0) {
+    XLSX.utils.book_append_sheet(workbook, toSheetExtratoByRules(extratoRows, extratoHeaders), 'EXTRATO');
+  }
+  if (produtividadeRows.length > 0) {
+    XLSX.utils.book_append_sheet(
+      workbook,
+      toSheetProdutividadeByRules(produtividadeRows, produtividadeHeaders),
+      'PRODUTIVIDADE',
+    );
+  }
+
+  return workbook;
+}
+
+function buildEmissaoWorkbook(
+  credorName: string,
+  baseRows: RowRecord[],
+  baseHeaders: string[],
+  empresaCnpjMap: Map<string, string>,
+  minimoRows: MinimoRecord[],
+  descontosRows: DiscountLedgerEntry[],
+): XLSX.WorkBook {
+  const empresaCol = getFirstExistingColumn(baseHeaders, [/^empresa$/]);
+  const valorOriginalCol = getFirstExistingColumn(baseHeaders, [/valor original/]);
+
+  const workbook = XLSX.utils.book_new();
+  const consolidatedByEmpresa = new Map<string, SheetRecord>();
+  const cnpjByEmpresaFromMinimo = new Map<string, string>();
+
+  for (const row of minimoRows) {
+    const empresaKey = normalizeEmpresaKey(row.empresa);
+    const cnpj = normalizeDocument(row.cnpj);
+    if (!empresaKey || !cnpj) continue;
+    if (!cnpjByEmpresaFromMinimo.has(empresaKey)) {
+      cnpjByEmpresaFromMinimo.set(empresaKey, cnpj);
+    }
+  }
+
+  for (const row of baseRows) {
+    if (!empresaCol || !valorOriginalCol) continue;
+
+    const empresa = toDisplayText(row[empresaCol]) || '-';
+    const cnpj =
+      resolveCnpjForEmpresa(empresa, empresaCnpjMap) ||
+      cnpjByEmpresaFromMinimo.get(normalizeEmpresaKey(empresa)) ||
+      '-';
+    const valor = parseNumber(row[valorOriginalCol]);
+    if (valor === 0) continue;
+
+    const key = `${normalizeEmpresaKey(empresa)}::${cnpj}`;
+    const current = consolidatedByEmpresa.get(key);
+
+    if (!current) {
+      consolidatedByEmpresa.set(key, {
+        EMPRESA: empresa,
+        CREDOR: credorName,
+        'CNPJ PARA EMISSAO': cnpj,
+        VALOR: Number(valor.toFixed(2)),
+      });
+      continue;
+    }
+
+    const nextValue = Number(((Number(current.VALOR) || 0) + valor).toFixed(2));
+    current.VALOR = nextValue;
+  }
+
+  // Apply desconto efetivamente usado no PGC por empresa.
+  const descontoAplicadoPorEmpresa = new Map<string, number>();
+  for (const entry of descontosRows) {
+    const empresaKey = normalizeEmpresaKey(entry.empresa);
+    if (!empresaKey) continue;
+    const aplicado = Number(entry.aplicadoNoPgc ?? 0);
+    if (!Number.isFinite(aplicado) || aplicado <= 0) continue;
+    descontoAplicadoPorEmpresa.set(
+      empresaKey,
+      Number(((descontoAplicadoPorEmpresa.get(empresaKey) ?? 0) + aplicado).toFixed(2)),
+    );
+  }
+
+  for (const current of consolidatedByEmpresa.values()) {
+    const empresaKey = normalizeEmpresaKey(current.EMPRESA);
+    const descontoEmpresa = descontoAplicadoPorEmpresa.get(empresaKey) ?? 0;
+    if (descontoEmpresa <= 0) continue;
+
+    const bruto = Number(current.VALOR) || 0;
+    const liquido = Number(Math.max(0, bruto - descontoEmpresa).toFixed(2));
+    current.VALOR = liquido;
+  }
+
+  const detalhes: SheetRecord[] = Array.from(consolidatedByEmpresa.values()).sort((a, b) =>
+    String(a.EMPRESA).localeCompare(String(b.EMPRESA), 'pt-BR', { sensitivity: 'base' }),
+  );
+
+  const emissaoSheet = XLSX.utils.json_to_sheet(
+    detalhes.length > 0
+      ? detalhes
+      : [
+          {
+            EMPRESA: '-',
+            CREDOR: credorName,
+            'CNPJ PARA EMISSAO': '-',
+            VALOR: 0,
+          },
+        ],
+  );
+  applyCurrencyFormatByHeaders(emissaoSheet, ['EMPRESA', 'CREDOR', 'CNPJ PARA EMISSAO', 'VALOR']);
+
+  XLSX.utils.book_append_sheet(workbook, emissaoSheet, 'EMISSAO');
+
+  return workbook;
+}
+
+function normalizePeriodLabel(raw: string): string {
+  const text = toDisplayText(raw).toUpperCase();
+  if (!text) return '';
+
+  const monthMap: Record<string, string> = {
+    JANEIRO: '01',
+    FEVEREIRO: '02',
+    MARCO: '03',
+    ABRIL: '04',
+    MAIO: '05',
+    JUNHO: '06',
+    JULHO: '07',
+    AGOSTO: '08',
+    SETEMBRO: '09',
+    OUTUBRO: '10',
+    NOVEMBRO: '11',
+    DEZEMBRO: '12',
+  };
+
+  const normalized = normalizeText(text).toUpperCase();
+  for (const [name, mm] of Object.entries(monthMap)) {
+    if (!normalized.includes(name)) continue;
+
+    const yearMatch = text.match(/(20\d{2}|\d{2})/);
+    if (yearMatch) {
+      const yy = yearMatch[1].length === 2 ? yearMatch[1] : yearMatch[1].slice(2);
+      return `${mm}-${yy}`;
+    }
+  }
+
+  return text.replace(/\s+/g, '-');
+}
+
+function extractProdutividadePeriod(sheetName?: string): string {
+  if (!sheetName) return '';
+  const clean = toDisplayText(sheetName);
+  const withoutPrefix = clean.replace(/^produtividade\s*/i, '').trim();
+  return normalizePeriodLabel(withoutPrefix || clean);
+}
+
+function resolveFlowOutputDir(flow: string, numeroPgc: string): string {
+  const workspaceRoot = resolveWorkspaceRoot();
+
+  if (flow === 'laghetto-sports') {
+    return path.join(workspaceRoot, 'PGC', 'SPORTS', numeroPgc);
+  }
+
+  if (flow === 'lgm') {
+    return path.join(workspaceRoot, 'PGC', 'LGM', numeroPgc);
+  }
+
+  return path.join(workspaceRoot, 'PGC', numeroPgc);
+}
+
+async function writeZipFromFiles(zipFilePath: string, rootDir: string, filePaths: string[]): Promise<void> {
+  const zip = new JSZip();
+
+  for (const filePath of filePaths) {
+    const buffer = await fs.readFile(filePath);
+    const relative = path.relative(rootDir, filePath).split(path.sep).join('/');
+    zip.file(relative, buffer);
+  }
+
+  const content = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  await fs.mkdir(path.dirname(zipFilePath), { recursive: true });
+  await fs.writeFile(zipFilePath, content);
+}
+
+async function pruneOutputDirForNewRun(outputDir: string, flow: string): Promise<void> {
+  // In Sports, output folder is reused by PGC number; remove old credor folders to avoid mixing runs.
+  if (flow !== 'laghetto-sports') return;
+
+  const entries = await fs.readdir(outputDir, { withFileTypes: true }).catch(() => [] as Array<{ isDirectory: () => boolean; name: string }>);
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const target = path.join(outputDir, entry.name);
+    await fs.rm(target, { recursive: true, force: true });
+  }
+}
+
+export function startProcessingWorker(): Worker {
+  return new Worker(
+    'pgc-processing',
+    async (job) => {
+      const requestId = String(job.data.requestId);
+      const flow = String(job.data.flow ?? 'classic');
+      const requestedCredores = ((job.data.credores as string[]) ?? [])
+        .map((item) => toDisplayText(item))
+        .filter(Boolean);
+
+      if (await shouldStop(requestId)) return;
+
+      await reportProgress(requestId, { stage: 'INGESTION', percent: 10, status: 'PROCESSING' });
+
+      const workbookPath = await withProgressHeartbeat(
+        requestId,
+        { stage: 'INGESTION', percent: 10 },
+        () => resolveInputWorkbook(requestId, flow),
+      );
+      const workbookFileName = path.basename(workbookPath);
+      const workbookBuffer = await withProgressHeartbeat(
+        requestId,
+        { stage: 'INGESTION', percent: 12 },
+        () =>
+          withTimeout(
+            fs.readFile(workbookPath),
+            Number(process.env.INGESTION_TIMEOUT_MS ?? 20_000),
+            'INGESTION',
+          ),
+      );
+
+      const workbook = await withProgressHeartbeat(
+        requestId,
+        { stage: 'INGESTION', percent: 15 },
+        () => Promise.resolve(XLSX.read(workbookBuffer, { type: 'buffer' })),
+      );
+      const sheetNames = workbook.SheetNames;
+
+      const pgcSheetName =
+        findSheetName(sheetNames, /\bpgc\b/) ?? findSheetName(sheetNames, /principal|base\s*pgc/);
+      if (!pgcSheetName) {
+        throw new Error('PGC_SHEET_NOT_FOUND');
+      }
+
+      const baseSheetName = findSheetName(sheetNames, /\bbase\b/);
+      if (!baseSheetName) {
+        throw new Error('BASE_SHEET_NOT_FOUND');
+      }
+
+      const extratoSheetName = findSheetName(sheetNames, /\bextrato\b/);
+      const produtividadeSheetName = findSheetName(sheetNames, /produtividade|\bprod\b/);
+      const produtividadePeriod = extractProdutividadePeriod(produtividadeSheetName);
+
+      if (!extratoSheetName) {
+        await reportProgress(requestId, {
+          stage: 'INGESTION',
+          percent: 12,
+          appendError: {
+            code: 'OPTIONAL_EXTRATO_MISSING',
+            message: 'Aba EXTRATO nao encontrada; processamento continuara sem ela.',
+          },
+        });
+      }
+
+      if (!produtividadeSheetName) {
+        await reportProgress(requestId, {
+          stage: 'INGESTION',
+          percent: 14,
+          appendError: {
+            code: 'OPTIONAL_PRODUTIVIDADE_MISSING',
+            message: 'Aba PRODUTIVIDADE nao encontrada; processamento continuara sem ela.',
+          },
+        });
+      }
+
+      const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
+
+      const baseSheet = parseTabularSheet(workbook.Sheets[baseSheetName]);
+      const extratoSheet = extratoSheetName
+        ? parseTabularSheet(workbook.Sheets[extratoSheetName])
+        : { records: [], headers: [] };
+      const produtividadeSheet = produtividadeSheetName
+        ? parseTabularSheet(workbook.Sheets[produtividadeSheetName])
+        : { records: [], headers: [] };
+
+      if (!baseSheet.credorColumn) {
+        throw new Error('BASE_CREDOR_COLUMN_NOT_FOUND');
+      }
+
+      if (await shouldStop(requestId)) return;
+
+      await reportProgress(requestId, { stage: 'MINIMO', percent: 30, status: 'PROCESSING' });
+
+      const cnpjFallback = buildCnpjFallbackMap(baseSheet);
+      const empresaCnpjMap = await loadEmpresaCnpjMap(path.dirname(workbookPath));
+      const minimoRecords = await withProgressHeartbeat(
+        requestId,
+        { stage: 'MINIMO', percent: 30 },
+        () =>
+          withTimeout(
+            Promise.resolve(deriveMinimoRecords(workbook.Sheets[pgcSheetName], cnpjFallback, empresaCnpjMap)),
+            Number(process.env.MINIMO_TIMEOUT_MS ?? 20_000),
+            'MINIMO',
+          ),
+      );
+
+          const discountHistoryState = await loadDiscountHistoryState();
+
+      const baseValorColumn = detectColumn(baseSheet.headers, [
+        /valor\s*original/,
+        /^valor$/,
+        /total\s*geral/,
+      ]);
+      const basePeriodoColumn = detectColumn(baseSheet.headers, [
+        /mes\s*venda/,
+        /mes\s*prev\s*pagamento/,
+        /periodo/,
+        /referencia/,
+      ]);
+
+      if (await shouldStop(requestId)) return;
+
+      await reportProgress(requestId, { stage: 'DESCONTOS', percent: 50, status: 'PROCESSING' });
+
+      const discoveredCredores = new Map<string, string>();
+      for (const row of baseSheet.records) {
+        const name = row[baseSheet.credorColumn];
+        const slug = toSlug(name);
+        if (!slug) continue;
+        if (!discoveredCredores.has(slug)) {
+          discoveredCredores.set(slug, toCredorDisplayName(name) || slug);
+        }
+      }
+      for (const row of minimoRecords) {
+        const slug = toSlug(row.credor);
+        if (!slug) continue;
+        if (!discoveredCredores.has(slug)) {
+          discoveredCredores.set(slug, row.credor);
+        }
+      }
+
+      const targetCredores = requestedCredores.length
+        ? requestedCredores.map((item) => ({ slug: toSlug(item), label: item }))
+        : Array.from(discoveredCredores.entries()).map(([slug, label]) => ({ slug, label }));
+
+      const filteredCredores = targetCredores.filter((item) => item.slug);
+      filteredCredores.sort((a, b) =>
+        (a.label || a.slug).localeCompare(b.label || b.slug, 'pt-BR', { sensitivity: 'base' }),
+      );
+      if (filteredCredores.length === 0) {
+        throw new Error('NO_CREDORES_TO_PROCESS');
+      }
+
+      const outputDir = resolveFlowOutputDir(flow, numeroPgc);
+      await fs.mkdir(outputDir, { recursive: true });
+      await pruneOutputDirForNewRun(outputDir, flow);
+
+      // Persiste MINIMO.xlsx para uso posterior pelo serviço de e-mails.
+      if (minimoRecords.length > 0) {
+        const minimoWb = XLSX.utils.book_new();
+        const minimoData = minimoRecords.map((r) => ({
+          CREDOR: r.credor,
+          'MINIMO/FIXO': r.minimo,
+          'EMPRESA EMISSAO': r.empresa,
+          CNPJ: r.cnpj,
+          DESCONTO: r.desconto ?? 0,
+          TOTAL: r.total ?? r.minimo,
+        }));
+        const minimoWs = XLSX.utils.json_to_sheet(minimoData);
+        XLSX.utils.book_append_sheet(minimoWb, minimoWs, 'MINIMO');
+        const minimoOutPath = path.join(outputDir, 'MINIMO.xlsx');
+        XLSX.writeFile(minimoWb, minimoOutPath);
+        console.log(`MINIMO.xlsx salvo em ${minimoOutPath} (${minimoRecords.length} registros)`);
+      }
+
+      const createdFiles: string[] = [];
+      const folderNameOccurrences = new Map<string, number>();
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      for (let index = 0; index < filteredCredores.length; index += 1) {
+        await yieldToEventLoop();
+
+        const credorSlug = filteredCredores[index].slug;
+        const credorName =
+          discoveredCredores.get(credorSlug) || toCredorDisplayName(filteredCredores[index].label) || credorSlug;
+
+        if (await shouldStop(requestId)) return;
+
+        const dynamicPercent = 55 + Math.floor((index / filteredCredores.length) * 35);
+
+        await reportProgress(requestId, {
+          stage: 'CREDOR_LOOP',
+          percent: dynamicPercent,
+          currentCredor: credorSlug,
+          credorUpdate: { credorSlug, state: 'PROCESSING' },
+        });
+
+        try {
+          const baseRows = filterByCredor(baseSheet.records, baseSheet.credorColumn, credorSlug);
+          const extratoRows = filterByCredor(extratoSheet.records, extratoSheet.credorColumn, credorSlug);
+          const produtividadeRows = filterByCredor(
+            produtividadeSheet.records,
+            produtividadeSheet.credorColumn,
+            credorSlug,
+          );
+          const minimoRowsRaw = filterMinimoByCredor(minimoRecords, credorSlug);
+          const { adjustedRows: minimoRows, ledger: descontosRows } = applyDiscountsForCredor(
+            credorSlug,
+            minimoRowsRaw,
+            discountHistoryState,
+            baseRows,
+            baseSheet.headers,
+          );
+
+          await appendDiscountHistoryLog(
+            descontosRows.map((entry) => ({
+              createdAt: new Date().toISOString(),
+              requestId,
+              numeroPgc,
+              credorSlug,
+              credorName,
+              empresa: entry.empresa,
+              descontoAtual: Number(entry.descontoAtual.toFixed(2)),
+              carryoverAnterior: Number(entry.carryoverAnterior.toFixed(2)),
+              aplicadoNoPgc: Number(entry.aplicadoNoPgc.toFixed(2)),
+              saldoProximoPgc: Number(entry.saldoProximoPgc.toFixed(2)),
+            })),
+          );
+
+          const valorBase =
+            baseValorColumn && baseRows.length > 0
+              ? baseRows.reduce((acc, row) => acc + parseNumber(row[baseValorColumn] ?? ''), 0)
+              : 0;
+          const valorMinimo = minimoRows.reduce((acc, row) => acc + row.total, 0);
+          const descontoAplicadoTotal = descontosRows.reduce(
+            (acc, row) => acc + Math.max(0, Number(row.aplicadoNoPgc ?? 0)),
+            0,
+          );
+          const valorBaseLiquido = Number(Math.max(0, valorBase - descontoAplicadoTotal).toFixed(2));
+          const valorTotalCredor = valorBase > 0 ? valorBaseLiquido : valorMinimo;
+
+          const periodoFromBase =
+            basePeriodoColumn && baseRows.length > 0
+              ? toDisplayText(
+                  baseRows.find((row) => toDisplayText(row[basePeriodoColumn] ?? '') !== '')?.[basePeriodoColumn] ??
+                    '',
+                )
+              : '';
+          const periodoCredor =
+            periodoFromBase ||
+            `${String(new Date().getMonth() + 1).padStart(2, '0')}/${new Date().getFullYear()}`;
+          const produtividadeMissingWarning =
+            produtividadeRows.length === 0
+              ? 'Arquivo de produtividade nao gerado para este credor (sem linhas na aba PRODUTIVIDADE).'
+              : undefined;
+
+          if (
+            baseRows.length === 0 &&
+            extratoRows.length === 0 &&
+            produtividadeRows.length === 0 &&
+            minimoRows.length === 0
+          ) {
+            throw new Error('CREDOR_NO_DATA');
+          }
+
+          await withProgressHeartbeat(
+            requestId,
+            { stage: 'CREDOR_LOOP', percent: dynamicPercent, currentCredor: credorSlug },
+            () =>
+              withTimeout(
+                Promise.resolve().then(() => {
+                  const safeCredor = safeFilePart(credorName);
+                  const folderName = buildUniqueFolderName(outputDir, safeCredor, folderNameOccurrences);
+                  const credorDir = path.join(outputDir, folderName);
+                  const baseName = `${safeCredor} - PGC ${numeroPgc}`;
+                  return fs.mkdir(credorDir, { recursive: true }).then(() => {
+
+                    const credorWorkbook = buildCredorWorkbook(
+                      baseRows,
+                      baseSheet.headers,
+                      minimoRows,
+                      extratoRows,
+                      extratoSheet.headers,
+                      produtividadeRows,
+                      produtividadeSheet.headers,
+                      descontosRows,
+                    );
+                    const credorFile = path.join(credorDir, `${baseName}.xlsx`);
+                    XLSX.writeFile(credorWorkbook, credorFile, { bookType: 'xlsx' });
+                    createdFiles.push(credorFile);
+
+                    const emissaoWorkbook = buildEmissaoWorkbook(
+                      credorName,
+                      baseRows,
+                      baseSheet.headers,
+                      empresaCnpjMap,
+                      minimoRows,
+                      descontosRows,
+                    );
+                    const emissaoFile = path.join(credorDir, `${baseName} EMISSAO.xlsx`);
+                    XLSX.writeFile(emissaoWorkbook, emissaoFile, { bookType: 'xlsx' });
+                    createdFiles.push(emissaoFile);
+
+                    if (extratoRows.length > 0) {
+                      const extratoBook = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(
+                        extratoBook,
+                        toSheetExtratoByRules(extratoRows, extratoSheet.headers),
+                        'EXTRATO',
+                      );
+                      const extratoFile = path.join(credorDir, `${baseName} EXTRATO.xlsx`);
+                      XLSX.writeFile(extratoBook, extratoFile, { bookType: 'xlsx' });
+                      createdFiles.push(extratoFile);
+                    }
+
+                    if (produtividadeRows.length > 0) {
+                      const prodBook = XLSX.utils.book_new();
+                      XLSX.utils.book_append_sheet(
+                        prodBook,
+                        toSheetProdutividadeByRules(produtividadeRows, produtividadeSheet.headers),
+                        'PRODUTIVIDADE',
+                      );
+                      const prodSuffix = produtividadePeriod ? ` ${produtividadePeriod}` : '';
+                      const prodFile = path.join(credorDir, `${baseName} PRODUTIVIDADE${prodSuffix}.xlsx`);
+                      XLSX.writeFile(prodBook, prodFile, { bookType: 'xlsx' });
+                      createdFiles.push(prodFile);
+                    }
+                  });
+                }),
+                Number(process.env.CREDOR_TIMEOUT_MS ?? 30_000),
+                `CREDOR_${credorSlug}`,
+              ),
+          );
+
+          successCount += 1;
+          await reportProgress(requestId, {
+            stage: 'CREDOR_LOOP',
+            percent: Math.min(92, dynamicPercent + 2),
+            successCount,
+            credorUpdate: {
+              credorSlug,
+              state: 'SUCCESS',
+              credorName,
+              numeroPgc,
+              periodo: periodoCredor,
+              valorTotal: Number(valorTotalCredor.toFixed(2)),
+              flow,
+              warning: produtividadeMissingWarning,
+            },
+          });
+        } catch (error) {
+          errorCount += 1;
+          const message = (error as Error).message;
+          const code = message.includes('TIMEOUT')
+            ? 'CREDOR_TIMEOUT_ERROR'
+            : message === 'CREDOR_NO_DATA'
+              ? 'CREDOR_NO_DATA'
+              : 'CREDOR_PROCESSING_ERROR';
+
+          await reportProgress(requestId, {
+            stage: 'CREDOR_LOOP',
+            percent: Math.min(92, dynamicPercent + 2),
+            errorCount,
+            credorUpdate: { credorSlug, state: 'ERROR' },
+            appendError: {
+              credorSlug,
+              code,
+              message:
+                code === 'CREDOR_NO_DATA'
+                  ? 'Credor sem dados nas abas disponiveis; processamento seguiu para os demais.'
+                  : 'Falha isolada de credor sem interromper job global',
+            },
+          });
+        }
+
+        await yieldToEventLoop();
+      }
+
+      await persistDiscountHistoryState(discountHistoryState);
+
+      if (await shouldStop(requestId)) return;
+
+      if (createdFiles.length === 0) {
+        throw new Error('NO_OUTPUT_FILES_CREATED');
+      }
+
+      const workspaceRoot = resolveWorkspaceRoot();
+      const zipRelativePath = `requests/${requestId}/outputs.zip`;
+      const zipAbsolutePath = path.join(workspaceRoot, ...zipRelativePath.split('/'));
+
+      await withProgressHeartbeat(
+        requestId,
+        { stage: 'ARTIFACTS', percent: 93 },
+        () =>
+          withTimeout(
+            writeZipFromFiles(zipAbsolutePath, outputDir, createdFiles),
+            Number(process.env.ARTIFACTS_TIMEOUT_MS ?? 180_000),
+            'ARTIFACTS',
+          ),
+      );
+
+      await reportProgress(requestId, {
+        stage: 'ARTIFACTS',
+        percent: 95,
+        appendArtifact: { type: 'ZIP', path: zipRelativePath },
+      });
+
+      if (await shouldStop(requestId)) return;
+
+      await reportProgress(requestId, {
+        stage: 'FINISHED',
+        percent: 100,
+        status: errorCount > 0 ? 'ERROR' : 'SUCCESS',
+        successCount,
+        errorCount,
+        expectedCredores: filteredCredores.map((item) => item.slug),
+      });
+    },
+    {
+      connection: {
+        host: process.env.REDIS_HOST ?? 'localhost',
+        port: Number(process.env.REDIS_PORT ?? 6379),
+      },
+      concurrency: Number(process.env.PGC_WORKER_CONCURRENCY ?? 1),
+      lockDuration: Number(process.env.PGC_WORKER_LOCK_DURATION_MS ?? 600_000),
+      stalledInterval: Number(process.env.PGC_WORKER_STALLED_INTERVAL_MS ?? 30_000),
+      maxStalledCount: Number(process.env.PGC_WORKER_MAX_STALLED_COUNT ?? 5),
+    },
+  );
+}

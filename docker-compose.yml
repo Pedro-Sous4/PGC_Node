@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: pgc-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pgc
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgc_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: pgc-redis
+    ports:
+      - '6379:6379'
+
+  minio:
+    image: minio/minio:latest
+    container_name: pgc-minio
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - pgc_minio_data:/data
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: pgc-prometheus
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - '9090:9090'
+
+volumes:
+  pgc_postgres_data:
+  pgc_minio_data:

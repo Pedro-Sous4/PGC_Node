@@ -1,0 +1,291 @@
+PROMPT DE GAP FUNCIONAL - SISTEMA ATUAL (DJANGO) VS SISTEMA NOVO (NODE)
+Data de referencia: 2026-03-13
+
+OBJETIVO
+Voce deve implementar no sistema novo tudo que existe no sistema atual e nao esta descrito como pronto no relatorio-status-2026-03-13.txt.
+Considere que o relatorio do novo sistema ja cobre: job async, status por request_id, erros, status por credor, reprocessamento seletivo, cancelamento de job, artefatos, health/ready/metrics/docs, dashboard operacional basico e acompanhamento em tempo real.
+
+INSTRUCAO CRITICA
+Implemente os itens abaixo como requisitos de paridade funcional com o sistema atual. Nao simplifique regras de negocio, validacoes, layouts de tela, filtros, acoes em lote e formatos de arquivo.
+
+==================================================
+1) MODULOS DE NEGOCIO E DADOS AUSENTES NO NOVO
+==================================================
+
+1.1 Gestao de Credores (completo)
+- CRUD completo de Credor:
+	- listar, criar, editar, excluir
+	- campos: nome, nome_normalizado, email, periodo, enviado, data_envio, grupo
+- Regras de normalizacao de nome:
+	- title case com excecoes de preposicoes
+	- campo nome_normalizado para busca/index
+- Regras de protecao de campos:
+	- nome e email sao campos protegidos em fluxos de importacao PGC
+	- upload administrativo de emails pode sobrescrever email (allow_protected_update)
+- Filtro e ordenacao na listagem:
+	- busca por nome
+	- status enviados/nao_enviados
+	- filtro por PGC
+	- filtro por grupo
+	- ordenacao asc/desc por coluna
+- Paginacao em tela de credores
+
+1.2 Gestao de Grupos
+- Entidade Grupo e associacao de Credor -> Grupo
+- Filtros por grupo nas telas (dashboard, listagem, envio)
+
+1.3 Gestao de Empresas Pagadoras
+- Entidade EmpresaPagadora:
+	- nome_curto
+	- nome_completo
+	- cnpj
+- Uso na geracao de planilhas de emissao e no texto de minimo/descontos
+
+1.4 Gestao de Rendimentos e Historico PGC
+- CRUD de Rendimento por credor
+- Campo valor aceitando formato monetario BR (R$ 1.234,56)
+- Campo numero_pgc no form de rendimento
+- Sincronismo automatico com HistoricoPGC:
+	- criar/atualizar/excluir historico conforme soma por periodo
+- CRUD de HistoricoPGC (editar/excluir)
+- Pagina de detalhe do credor com:
+	- historico consolidado por periodo/pgc
+	- resumo total, media, quantidade de periodos
+
+1.5 Log de envio de email por credor/historico
+- Entidade EmailLog com status:
+	- pending, sending, sent, failed
+- Campos de rastreio:
+	- attempts, last_attempt_at, sent_at, error_message
+- Atualizacao de EmailLog durante tentativas de envio
+
+
+==================================================
+2) PAGINAS/TELAS DO SISTEMA ATUAL NAO EVIDENCIADAS NO NOVO
+==================================================
+
+2.1 Navegacao principal
+- Home
+- Dashboard de envio
+- Credores
+- Upload de e-mails
+- Enviar e-mails
+- Laghetto Sports
+- Laghetto Golden (LGM)
+
+2.2 Tela: Dashboard de Envio
+- Filtro por grupo
+- Cards de totais enviados x nao enviados
+- Grafico por numero do PGC (barra)
+- Listas de credores enviados e nao enviados
+
+2.3 Tela: Lista de Credores
+- Tabela com colunas:
+	- nome, email, periodo, PGC, valor total, status, grupo
+- Acoes por linha:
+	- ver detalhe/historico
+	- gerar PDF
+	- editar
+	- enviar email individual
+	- excluir
+- Acoes em lote:
+	- enviar emails selecionados
+	- exportar PDFs selecionados (ZIP)
+	- marcar selecionados como enviados
+	- marcar selecionados como nao enviados
+	- excluir selecionados
+- Exportacoes da listagem:
+	- CSV
+	- Excel
+
+2.4 Tela: Adicionar Credor
+- Cadastro manual com nome, email e grupo
+
+2.5 Tela: Detalhe de Credor / Historico
+- Exibe historicos PGC e/ou rendimentos
+- Permite editar/excluir historico
+- Permite adicionar/editar/excluir rendimento
+- Botao gerar PDF completo
+- Botao enviar email individual
+
+2.6 Tela: Upload de E-mails
+- Upload CSV/XLSX para criar/atualizar credores
+- Colunas obrigatorias: nome, email, grupo
+- Validacao de grupo inexistente
+
+2.7 Tela: Enviar E-mails por periodo
+- Filtros obrigatorios:
+	- grupo
+	- numero_pgc
+- Filtro de escopo:
+	- todos
+	- por credor
+	- por empresa
+- Checkbox para selecionar subconjunto de credores do grupo
+- Campo editavel de mensagem principal (template)
+- Campo editavel de texto de minimo
+- Campo editavel de texto de descontos
+- Relatorio de envio na mesma tela:
+	- enviados
+	- pendentes/falha
+	- attempts e erro
+
+2.8 Tela: Edicao de mensagem de e-mail
+- Persistencia em JSON da mensagem e templates auxiliares
+
+2.9 Tela: Upload Planilha PGC (fluxo sincrono legado)
+- Recebe arquivo + numero_pgc
+- Normaliza planilha e gera arquivos base/extrato/produtividade
+- Gera MINIMO.xlsx
+- Gera arquivos por credor em estrutura de pastas
+
+2.10 Tela: Laghetto Sports
+- Upload especifico
+- Processamento assincrono
+- Polling de status
+- Logs em tempo real
+- Download final de ZIP
+
+2.11 Tela: LGM avancada (alem do basico descrito no relatorio)
+- Modal/resumo visual de logs
+- Resolucao de erros por credor (ignorar/resolver)
+- Endpoint de erro estruturado (errors.json)
+- Endpoint de metadados de credores processados (credores.json)
+
+2.12 Autenticacao de usuario (UI completa)
+- signup
+- login/logout
+- password change
+- password reset
+
+
+==================================================
+3) FLUXOS E REGRAS DE NEGOCIO AUSENTES NO NOVO
+==================================================
+
+3.1 Upload de planilha PGC -> geracao de arquivos por credor
+- Deteccao e normalizacao de abas (BASE, EXTRATO, PRODUTIVIDADE, PGC n)
+- Gera estrutura de saida por PGC e por credor
+- Nome de pasta de credor em formato de exibicao (upper case)
+- Cria/atualiza Credor e HistoricoPGC durante processamento
+
+3.2 Regras de MINIMO
+- Extracao robusta da aba de minimo com colunas/indices esperados
+- Mapeamento esperado no layout novo PGC:
+	- CREDOR (AG)
+	- MINIMO/FIXO (AO)
+	- EMPRESA EMISSAO (AP)
+	- CNPJ via lookup em EMPRESAS_NOMECURTO_CNPJ.xlsx
+- Gera MINIMO.xlsx consolidado
+
+3.3 Regras de DESCONTOS no e-mail
+- Busca DESCONTOS.xlsx no diretorio do PGC
+- Filtra descontos por credor normalizado
+- Monta texto de descontos com template configuravel
+- Suporta multiplas linhas de desconto por credor
+
+3.4 Regras de envio de email por credor
+- Busca anexos XLSX na pasta do credor
+- Monta corpo com placeholders:
+	- {credor.nome}
+	- {historico.numero_pgc}
+	- {historico.periodo}
+	- {info_minimo}
+	- {info_descontos}
+- Atualiza status do credor (enviado/data_envio)
+- Atualiza EmailLog por tentativa
+- Isola falha por credor sem interromper lote
+
+3.5 Abertura de pasta local do credor
+- Acao para abrir pasta no explorer do Windows
+
+3.6 Progress tracking com persistencia local
+- Snapshot de progresso em disco (progress.json)
+- Persistencia de erros em errors.json
+- Heartbeat/watchdog para detectar job travado
+- Status por credor com estados detalhados
+
+
+==================================================
+4) EXPORTACOES E ARTEFATOS AUSENTES NO NOVO
+==================================================
+
+- Exportar credores em CSV
+- Exportar credores em XLSX
+- Gerar PDF de relatorio completo por credor
+- Gerar PDF individual por rendimento
+- Exportar ZIP de PDFs para selecao em lote
+- Gerar arquivos XLSX por credor com nomenclatura padrao de negocio
+
+
+==================================================
+5) ENDPOINTS/ACOES LEGADAS QUE DEVEM EXISTIR NO NOVO
+==================================================
+
+Implementar equivalentes funcionais para os seguintes grupos de endpoint:
+- Credores:
+	- listagem com filtros
+	- CRUD
+	- acoes em lote
+	- exportacoes
+- Rendimentos:
+	- CRUD
+	- sincronismo com historico
+- Historico PGC:
+	- editar/excluir
+- Uploads:
+	- upload de emails
+	- upload de planilha PGC
+- Emails:
+	- envio individual
+	- envio por grupo/pgc
+	- edicao de mensagem/template
+	- relatorio de envios
+- LGM/Sports:
+	- upload
+	- status
+	- erros
+	- credores processados
+	- reprocessamento
+	- resolucao de erros
+	- download de artefatos
+
+
+==================================================
+6) CRITERIOS DE ACEITE (PARIDADE REAL)
+==================================================
+
+Considerar concluido somente quando:
+1. Todas as telas listadas estiverem acessiveis e funcionais.
+2. Filtros e acoes em lote reproduzirem o comportamento atual.
+3. Fluxo de upload PGC gerar os mesmos artefatos esperados por credor.
+4. Envio de email suportar minimo e descontos dinamicos com templates editaveis.
+5. Historico e logs de envio permitirem auditoria por credor, PGC e tentativa.
+6. Exportacoes CSV/XLSX/PDF/ZIP estiverem operando.
+7. Autenticacao de usuario (signup/login/reset/change) estiver operacional.
+8. Resiliencia por credor e monitoramento de progresso forem mantidos.
+
+
+==================================================
+7) ORDEM DE IMPLEMENTACAO SUGERIDA
+==================================================
+
+Fase 1 - Dominio e dados
+- Credor, Grupo, EmpresaPagadora, Rendimento, HistoricoPGC, EmailLog
+
+Fase 2 - CRUDs e telas administrativas
+- Credores, rendimentos, historico, dashboard, upload emails
+
+Fase 3 - Pipeline de negocio
+- Upload PGC, geracao por credor, minimo, descontos
+
+Fase 4 - Comunicacao e rastreio
+- Envio de emails por filtros, templates editaveis, relatorio de envio
+
+Fase 5 - Exportacoes e acabamento
+- CSV, XLSX, PDF, ZIP, consistencia de UX
+
+Fase 6 - Hardening
+- Testes de regressao funcional para garantir paridade com sistema atual
+
+FIM
