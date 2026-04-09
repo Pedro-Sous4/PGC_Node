@@ -102,6 +102,11 @@ export interface EmailSendResult {
   sent: number;
   failed: number;
   pending: number;
+  skipped_sem_pgc?: number;
+  skipped_sem_pgc_details?: Array<{
+    credorId: string;
+    nome: string;
+  }>;
   details: Array<{
     credorId: string;
     status: string;
@@ -124,6 +129,7 @@ export interface EmailSendResult {
     sent: number;
     failed: number;
     pending: number;
+    skipped_sem_pgc?: number;
     quantidadeLotes: number;
     tamanhoLoteConfigurado: number;
   };

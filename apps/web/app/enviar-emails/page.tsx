@@ -318,6 +318,7 @@ export default function EnviarEmailsPage() {
               <MetricCard label="Enviados" value={lastSend.total_geral?.sent ?? lastSend.sent} tone="primary" />
               <MetricCard label="Falhas" value={lastSend.total_geral?.failed ?? lastSend.failed} tone="accent" />
               <MetricCard label="Pendentes" value={lastSend.total_geral?.pending ?? lastSend.pending} />
+              <MetricCard label="Ignorados (sem PGC)" value={lastSend.total_geral?.skipped_sem_pgc ?? lastSend.skipped_sem_pgc ?? 0} />
               <MetricCard label="Lotes" value={lastSend.total_geral?.quantidadeLotes ?? lastSend.lotes?.length ?? 0} />
               <MetricCard label="Tam. lote" value={lastSend.total_geral?.tamanhoLoteConfigurado ?? '-'} />
             </div>

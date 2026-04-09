@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { ProcessingStatus } from '@prisma/client';
+import { Prisma, ProcessingStatus } from '@prisma/client';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as XLSX from 'xlsx';
@@ -53,6 +53,11 @@ type SendReport = {
     error?: string;
     batch?: number;
   }>;
+};
+
+type SkippedSemPgcDetail = {
+  credorId: string;
+  nome: string;
 };
 
 type MailAttachment = {
@@ -237,7 +242,7 @@ export class EmailsService {
   }
 
   async sendBatch(dto: SendEmailsDto) {
-    const where: { grupoId?: string; id?: { in: string[] } } = {};
+    const where: Prisma.CredorWhereInput = {};
     if (dto.grupoId) where.grupoId = dto.grupoId;
     if (dto.escopo === 'credor') {
       if (!dto.credorIds?.length) {
@@ -245,6 +250,8 @@ export class EmailsService {
           sent: 0,
           failed: 0,
           pending: 0,
+          skipped_sem_pgc: 0,
+          skipped_sem_pgc_details: [] as SkippedSemPgcDetail[],
           details: [],
           lotes: [],
           total_geral: {
@@ -252,6 +259,7 @@ export class EmailsService {
             sent: 0,
             failed: 0,
             pending: 0,
+            skipped_sem_pgc: 0,
             quantidadeLotes: 0,
             tamanhoLoteConfigurado: 0,
           },
@@ -260,8 +268,32 @@ export class EmailsService {
       where.id = { in: dto.credorIds };
     }
 
-    const credores = await this.prisma.credor.findMany({ where });
-    const credorIds = credores.map((item) => item.id);
+    const candidatos = await this.prisma.credor.findMany({
+      where,
+      select: { id: true, nomeExibivel: true },
+    });
+
+    const elegiveis = await this.prisma.credor.findMany({
+      where: {
+        AND: [
+          where,
+          {
+            OR: [
+              { historicos: { some: { numero_pgc: dto.numero_pgc } } },
+              { rendimentos: { some: { numero_pgc: dto.numero_pgc } } },
+            ],
+          },
+        ],
+      },
+      select: { id: true, nomeExibivel: true },
+    });
+
+    const credorIds = elegiveis.map((item) => item.id);
+    const elegiveisSet = new Set(credorIds);
+    const skippedSemPgcDetails: SkippedSemPgcDetail[] = candidatos
+      .filter((item) => !elegiveisSet.has(item.id))
+      .map((item) => ({ credorId: item.id, nome: item.nomeExibivel }));
+
     const systemSettings = await this.systemSettingsService.getSettings();
     const chunkSize = Math.max(1, Number(systemSettings.envio.loteMaximoCredores ?? 200));
     const batches = chunkArray(credorIds, chunkSize);
@@ -302,12 +334,15 @@ export class EmailsService {
 
     return {
       ...total,
+      skipped_sem_pgc: skippedSemPgcDetails.length,
+      skipped_sem_pgc_details: skippedSemPgcDetails,
       lotes: relatorioPorLote,
       total_geral: {
-        totalCredores: credorIds.length,
+        totalCredores: candidatos.length,
         sent: total.sent,
         failed: total.failed,
         pending: total.pending,
+        skipped_sem_pgc: skippedSemPgcDetails.length,
         quantidadeLotes: relatorioPorLote.length,
         tamanhoLoteConfigurado: chunkSize,
       },
