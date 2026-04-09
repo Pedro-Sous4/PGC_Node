@@ -173,6 +173,7 @@ export async function listCredores(params: {
   nome?: string;
   grupoId?: string;
   enviado?: string;
+  numero_pgc?: string;
   skip?: number;
   take?: number;
 }): Promise<{ data: CredorRow[]; page: { skip: number; take: number; total: number } }> {
@@ -180,6 +181,7 @@ export async function listCredores(params: {
   if (params.nome) query.set('nome', params.nome);
   if (params.grupoId) query.set('grupoId', params.grupoId);
   if (params.enviado === 'true' || params.enviado === 'false') query.set('enviado', params.enviado);
+  if (params.numero_pgc) query.set('numero_pgc', params.numero_pgc);
   query.set('skip', String(params.skip ?? 0));
   query.set('take', String(params.take ?? 20));
 

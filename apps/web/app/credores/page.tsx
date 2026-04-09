@@ -33,13 +33,21 @@ export default function CredoresPage() {
   const [editNome, setEditNome] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [editGrupoId, setEditGrupoId] = useState('');
+  const [currentPage, setCurrentPage] = useState(0);
+  const PAGE_SIZE = 20;
 
 
   const gruposQuery = useQuery({ queryKey: ['grupos'], queryFn: listGrupos });
   const credoresQuery = useQuery({
-    queryKey: ['credores', nome, grupoId, enviado, numeroPgc],
-    queryFn: () => listCredores({ nome, grupoId, enviado, numero_pgc: numeroPgc, take: 100 }),
+    queryKey: ['credores', nome, grupoId, enviado, numeroPgc, currentPage],
+    queryFn: () => listCredores({ nome, grupoId, enviado, numero_pgc: numeroPgc, skip: currentPage * PAGE_SIZE, take: PAGE_SIZE }),
   });
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(0); }, [nome, grupoId, enviado, numeroPgc]);
+
+  const pageInfo = credoresQuery.data?.page;
+  const totalPages = pageInfo ? Math.ceil(pageInfo.total / PAGE_SIZE) : 0;
 
   // Carregar opções de PGC ao montar ou ao mudar grupo
   useEffect(() => {
@@ -242,6 +250,31 @@ export default function CredoresPage() {
               })}
             </tbody>
         </DataTable>
+
+        {totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 16, padding: '8px 0' }}>
+            <span style={{ fontSize: 13, color: 'var(--text-secondary, #666)' }}>
+              {pageInfo ? `${pageInfo.skip + 1}–${Math.min(pageInfo.skip + PAGE_SIZE, pageInfo.total)} de ${pageInfo.total}` : ''}
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <ActionButton
+                variant="secondary"
+                label="← Anterior"
+                disabled={currentPage === 0}
+                onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+              />
+              <span style={{ display: 'flex', alignItems: 'center', fontSize: 13 }}>
+                Página {currentPage + 1} de {totalPages}
+              </span>
+              <ActionButton
+                variant="secondary"
+                label="Próxima →"
+                disabled={currentPage >= totalPages - 1}
+                onClick={() => setCurrentPage((p) => p + 1)}
+              />
+            </div>
+          </div>
+        )}
       </SectionCard>
 
       {isCreateModalOpen ? (
