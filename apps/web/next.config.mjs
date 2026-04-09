@@ -4,7 +4,7 @@ const nextConfig = {
     typedRoutes: true,
   },
   async rewrites() {
-    const apiDest = process.env.INTERNAL_API_URL ?? 'http://localhost:9081';
+    const apiDest = process.env.INTERNAL_API_URL ?? 'http://localhost:3001';
     return [
       {
         source: '/api-proxy/:path*',
