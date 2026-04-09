@@ -1,4 +1,4 @@
-const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:3001';
+const API = process.env.NEXT_PUBLIC_API_BASE_URL ?? '/api-proxy';
 
 const TOKEN_KEY = 'pgc_auth_token';
 
