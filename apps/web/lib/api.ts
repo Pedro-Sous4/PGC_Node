@@ -286,7 +286,19 @@ export async function uploadEmails(file: File, allowProtectedUpdate = false) {
     method: 'POST',
     body: form,
   });
-  if (!res.ok) throw new Error('Falha no upload de e-mails');
+  if (!res.ok) {
+    const raw = await res.text();
+    let detail = '';
+    if (raw) {
+      try {
+        const payload = JSON.parse(raw);
+        detail = payload?.message ? `: ${payload.message}` : payload?.error ? `: ${payload.error}` : `: ${raw}`;
+      } catch {
+        detail = `: ${raw}`;
+      }
+    }
+    throw new Error(`Falha no upload de e-mails${detail}`);
+  }
   return res.json();
 }
 
