@@ -123,6 +123,7 @@ export default function EnviarEmailsPage() {
         try {
           const result = await listCredores({
             grupoId: grupoId || undefined,
+            numero_pgc: numeroPgc || undefined,
             nome: credorSearch.trim() || undefined,
             take: 80,
           });
@@ -142,13 +143,13 @@ export default function EnviarEmailsPage() {
       canceled = true;
       clearTimeout(timeout);
     };
-  }, [escopo, grupoId, credorSearch]);
+  }, [escopo, grupoId, numeroPgc, credorSearch]);
 
   useEffect(() => {
     setSelectedCredorIds([]);
     setCredorSearch('');
     setCredorOptions([]);
-  }, [grupoId]);
+  }, [grupoId, numeroPgc]);
 
   useEffect(() => {
     if (!dispatchId) return;
