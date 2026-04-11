@@ -215,7 +215,7 @@ export default function CredoresPage() {
                 <th>Nome</th>
                 <th>Email</th>
                 <th>PGC</th>
-                <th>Valor Total</th>
+                <th>Valor PGC</th>
                 <th>Status</th>
                 <th>Grupo</th>
                 <th>Ações</th>
@@ -237,7 +237,7 @@ export default function CredoresPage() {
                     <td>{row.nome}</td>
                     <td>{row.email ?? '-'}</td>
                     <td>{row.numero_pgc ?? '-'}</td>
-                    <td>{`R$ ${row.valor_total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}</td>
+                    <td>{`R$ ${row.valor_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}</td>
                     <td>
                       <StatusBadge status={row.enviado ? 'Enviado' : 'Não enviado'} />
                     </td>

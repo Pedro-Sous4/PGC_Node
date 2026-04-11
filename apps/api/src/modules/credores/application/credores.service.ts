@@ -272,6 +272,13 @@ export class CredoresService {
     const data = items.map((item) => {
       const valorTotal = item.rendimentos.reduce((acc, r) => acc + Number(r.valor), 0);
       const latestRendimento = item.rendimentos[0];
+
+      // Calcula o Valor do PGC específico (ou do mais recente)
+      const targetPgc = query.numero_pgc || latestRendimento?.numero_pgc;
+      const valorPgc = item.rendimentos
+        .filter((r) => r.numero_pgc === targetPgc)
+        .reduce((acc, r) => acc + Number(r.valor), 0);
+
       return {
         id: item.id,
         slug: item.slug,
@@ -279,11 +286,12 @@ export class CredoresService {
         nome_normalizado: item.nomeCanonico,
         email: item.email,
         periodo: item.periodo || latestRendimento?.referencia || undefined,
-        numero_pgc: latestRendimento?.numero_pgc || undefined,
+        numero_pgc: targetPgc || undefined,
         enviado: item.enviado,
         data_envio: item.data_envio,
         grupo: item.grupo,
         valor_total: valorTotal,
+        valor_pgc: valorPgc,
       };
     });
 
@@ -312,7 +320,13 @@ export class CredoresService {
     const descontos_historico = await this.loadDiscountHistoryRowsForCredor(credor.nomeExibivel);
 
     const total = credor.rendimentos.reduce((acc, item) => acc + Number(item.valor), 0);
-    const media = credor.rendimentos.length > 0 ? total / credor.rendimentos.length : 0;
+    const quantidade_periodos = new Set(
+      credor.rendimentos
+        .map((item) => String(item.numero_pgc ?? '').trim())
+        .filter((pgc) => pgc !== '' && pgc !== '-'),
+    ).size;
+
+    const media = quantidade_periodos > 0 ? total / quantidade_periodos : 0;
 
     return {
       ...credor,
@@ -320,7 +334,7 @@ export class CredoresService {
       resumo: {
         total,
         media,
-        quantidade_periodos: new Set(credor.rendimentos.map((item) => item.referencia)).size,
+        quantidade_periodos,
       },
     };
   }

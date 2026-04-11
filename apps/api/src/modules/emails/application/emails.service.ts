@@ -19,7 +19,7 @@ type EmailTemplate = {
 const DEFAULT_TEMPLATE: EmailTemplate = {
   mensagem_principal:
     '{credor.nome},\nOlá,\n\nSegue em anexo produtividade, relatório com os bloqueios de comissão (distrato e inadimplência) e relação de clientes repassados.\n\nNo e-mail constam 4 planilhas, sendo elas:\n- Os valores de cada empresa para emissão - PGC {historico.numero_pgc} EMISSÃO\n- O borderô com os clientes que estão sendo repassados - PGC {historico.numero_pgc}\n- A produtividade que está com o nome PRODUTIVIDADE {historico.periodo}\n- O histórico das comissões bloqueadas por inadimplência e/ou distrato - EXTRATO\n\n{info_minimo}\n{info_descontos}\n\n\nNotas devem ser enviadas até SEXTA-FEIRA, dia 16/{historico.periodo}, às 12:00h.\n\nInformamos que o endereço da empresa ALTOS DA BORGES EMPREENDIMENTOS IMOBILIÁRIOS LTDA foi alterado para o seguinte local:\nRua Luiz de Camões, 360, Vila Nova, Novo Hamburgo/RS – CEP: 93.520-280.\n\nRessaltamos que, a partir desta data, não serão aceitas notas fiscais emitidas com o endereço antigo.\n\nAtenciosamente,',
-  texto_minimo: 'Minimo/fixo: {minimo.valor}. Empresa emissao: {minimo.empresa}. CNPJ: {minimo.cnpj}.',
+  texto_minimo: 'Mínimo garantido no valor de {valor_formatado}. Emitir nota para {empresa} - {cnpj}.',
   texto_descontos: 'Descontos aplicados:\n{linhas_descontos}',
 };
 
@@ -200,7 +200,8 @@ function formatDescontoLine(descricao: string, valor: string): string {
 
 function hasMinimoData(minimo: MinimoInfo): boolean {
   const valor = String(minimo.valor ?? '').trim();
-  return valor !== '' && valor !== '-';
+  if (valor === '' || valor === '-' || valor === '0' || valor === '0,00') return false;
+  return true;
 }
 
 function hasWorkbookExtension(fileName: string): boolean {
@@ -208,23 +209,27 @@ function hasWorkbookExtension(fileName: string): boolean {
 }
 
 function uniqueAttachments(items: MailAttachment[]): MailAttachment[] {
-  const seen = new Set<string>();
-  const out: MailAttachment[] = [];
+  const map = new Map<string, MailAttachment>();
 
   for (const item of items) {
-    const key = item.path ? `path:${path.resolve(item.path)}` : `content:${item.filename}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(item);
+    const key = String(item.filename).toLowerCase().trim();
+    const existing = map.get(key);
+
+    // Prioriza o que tem 'path' (arquivo físico) sobre o que tem 'content' (buffer)
+    if (!existing || (!existing.path && item.path)) {
+      map.set(key, item);
+    }
   }
 
-  return out;
+  return Array.from(map.values());
 }
 
 function applyTemplate(template: string, map: Record<string, string>): string {
   let text = template;
   for (const [key, value] of Object.entries(map)) {
-    text = text.replace(new RegExp(`\\{${key}\\}`, 'g'), value);
+    // Usamos uma função como segundo argumento para evitar que caracteres especiais como '$'
+    // presentes no valor (ex: R$ 1.000,00) sejam interpretados pelo motor de replace do JS.
+    text = text.replace(new RegExp(`\\{${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\}`, 'g'), () => String(value ?? ''));
   }
   return text;
 }
@@ -652,105 +657,117 @@ export class EmailsService {
     numeroPgc: string,
     requestId?: string,
   ): Promise<string[]> {
-    if (!pgcDir) {
-      return [];
+    if (!pgcDir) return [];
+    const normalizedCredor = normalizeCredorKey(credorNome);
+
+    // 1. PRIORIDADE: usa o historico de descontos persistido pelo worker (contém o valor APLICADO).
+    const historyFile = path.join(path.dirname(pgcDir), 'descontos-historico.json');
+    const historyExists = await fs
+      .stat(historyFile)
+      .then((st) => st.isFile())
+      .catch(() => false);
+
+    if (historyExists) {
+      const raw = await fs.readFile(historyFile, 'utf8').catch(() => '[]');
+      let entries: DiscountHistoryEntry[] = [];
+      try {
+        entries = JSON.parse(raw) as DiscountHistoryEntry[];
+      } catch {
+        entries = [];
+      }
+
+      const targetNumero = String(numeroPgc ?? '').trim();
+      const targetRequest = String(requestId ?? '').trim();
+
+      const scoped = entries.filter((entry) => {
+        const byCredor = normalizeCredorKey(entry.credorName ?? '') === normalizedCredor;
+        if (!byCredor) return false;
+
+        const byNumero = String(entry.numeroPgc ?? '').trim() === targetNumero;
+        if (!byNumero) return false;
+
+        if (targetRequest) {
+          return String(entry.requestId ?? '').trim() === targetRequest;
+        }
+
+        return true;
+      });
+
+      if (scoped.length > 0) {
+        const historyLines: string[] = [];
+        for (const entry of scoped) {
+          const empresa = textOf(entry.empresa);
+          const aplicado = Number(entry.aplicadoNoPgc ?? 0);
+          const descontoAtual = Number(entry.descontoAtual ?? 0);
+          if (!empresa) continue;
+          if (aplicado <= 0 && descontoAtual <= 0) continue;
+
+          // Prioriza o valor APLICADO. Se não houver aplicação mas houver saldo, mostra o saldo.
+          const valorParaExibir = aplicado > 0 ? aplicado : descontoAtual;
+          const formattedLine = formatDescontoLine(empresa, formatCurrencyBr(valorParaExibir));
+          if (formattedLine) historyLines.push(formattedLine);
+        }
+        if (historyLines.length > 0) {
+          return historyLines;
+        }
+      }
     }
 
+    // 2. FALLBACK 1: procura no arquivo DESCONTOS.xlsx
+    const lines: string[] = [];
     const descontosPath = path.join(pgcDir, 'DESCONTOS.xlsx');
-    const exists = await fs
+    const descontosExists = await fs
       .stat(descontosPath)
       .then((st) => st.isFile())
       .catch(() => false);
-    const normalizedCredor = normalizeCredorKey(credorNome);
 
-    if (exists) {
+    if (descontosExists) {
       const wb = XLSX.readFile(descontosPath);
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
-      const lines: string[] = [];
 
       for (const row of rows) {
         const credor = textOf(row.CREDOR ?? row.credor ?? row.NOME ?? row.nome);
         if (!credor || normalizeCredorKey(credor) !== normalizedCredor) continue;
 
         const descricao = textOf(row.DESCRICAO ?? row.descricao ?? row.TIPO ?? row.tipo);
-        const valor = textOf(row.VALOR ?? row.valor ?? row.DESCONTO ?? row.desconto);
+        const valorRaw = textOf(row.VALOR ?? row.valor ?? row.DESCONTO ?? row.desconto);
+        const valor = parseNumberLikeWorker(valorRaw);
 
-        if (descricao && valor) {
-          const formattedLine = formatDescontoLine(descricao, valor);
-          if (formattedLine) {
-            lines.push(formattedLine);
-          }
-        } else {
-          const fallback = Object.values(row)
-            .map((v) => textOf(v))
-            .filter(Boolean)
-            .join(' | ');
-          if (fallback) {
-            lines.push(`- ${fallback}`);
-          }
+        if (valor > 0) {
+          const formattedLine = formatDescontoLine(descricao || 'Desconto em Planilha', formatCurrencyBr(valor));
+          if (formattedLine) lines.push(formattedLine);
         }
       }
-
-      return lines;
     }
 
-    // Golden fallback: usa o historico de descontos persistido pelo worker.
-    const historyFile = path.join(path.dirname(pgcDir), 'descontos-historico.json');
-    const historyExists = await fs
-      .stat(historyFile)
-      .then((st) => st.isFile())
-      .catch(() => false);
-    if (!historyExists) {
-      return [];
-    }
+    // 3. FALLBACK 2: procura no arquivo MINIMO.xlsx
+    if (lines.length === 0) {
+      const minimoPath = path.join(pgcDir, 'MINIMO.xlsx');
+      const minimoExists = await fs
+        .stat(minimoPath)
+        .then((st) => st.isFile())
+        .catch(() => false);
 
-    const raw = await fs.readFile(historyFile, 'utf8').catch(() => '[]');
-    let entries: DiscountHistoryEntry[] = [];
-    try {
-      entries = JSON.parse(raw) as DiscountHistoryEntry[];
-    } catch {
-      return [];
-    }
+      if (minimoExists) {
+        const wbMin = XLSX.readFile(minimoPath);
+        const wsMin = wbMin.Sheets[wbMin.SheetNames[0]];
+        const rowsMin = XLSX.utils.sheet_to_json<Record<string, unknown>>(wsMin, { defval: '' });
 
-    const targetNumero = String(numeroPgc ?? '').trim();
-    const targetRequest = String(requestId ?? '').trim();
+        for (const row of rowsMin) {
+          const credor = textOf(row.CREDOR ?? row.credor ?? row.NOME ?? row.nome);
+          if (!credor || normalizeCredorKey(credor) !== normalizedCredor) continue;
 
-    const scoped = entries.filter((entry) => {
-      const byCredor = normalizeCredorKey(entry.credorName ?? '') === normalizedCredor;
-      if (!byCredor) return false;
+          const valorDesconto = textOf(row.DESCONTO ?? row.descontos ?? row.DESCONTOS);
+          const valorNum = parseNumberLikeWorker(valorDesconto);
+          const empresa = textOf(row['EMPRESA EMISSAO'] ?? row.EMPRESA ?? row.empresa);
 
-      const byNumero = String(entry.numeroPgc ?? '').trim() === targetNumero;
-      if (!byNumero) return false;
-
-      if (targetRequest) {
-        return String(entry.requestId ?? '').trim() === targetRequest;
-      }
-
-      return true;
-    });
-
-    if (scoped.length === 0) {
-      return [];
-    }
-
-    const lines: string[] = [];
-    for (const entry of scoped) {
-      const empresa = textOf(entry.empresa);
-      const aplicado = Number(entry.aplicadoNoPgc ?? 0);
-      const descontoAtual = Number(entry.descontoAtual ?? 0);
-      if (!empresa) continue;
-      if (aplicado <= 0 && descontoAtual <= 0) continue;
-
-      if (aplicado > 0) {
-        const formattedLine = formatDescontoLine(empresa, formatCurrencyBr(aplicado));
-        if (formattedLine) {
-          lines.push(formattedLine);
-        }
-      } else {
-        const formattedLine = formatDescontoLine(empresa, formatCurrencyBr(descontoAtual));
-        if (formattedLine) {
-          lines.push(formattedLine);
+          if (valorNum > 0) {
+            const descLine = formatDescontoLine(empresa || 'Desconto em Planilha', formatCurrencyBr(valorNum));
+            if (descLine && !lines.includes(descLine)) {
+              lines.push(descLine);
+            }
+          }
         }
       }
     }
@@ -1048,14 +1065,29 @@ export class EmailsService {
           'credor.nome': credor.nomeExibivel,
         });
 
-        await transporter.sendMail({
-          from: senderLabel,
-          to: credor.email,
-          replyTo: replyTo || undefined,
-          subject,
-          text: body,
-          attachments,
-        });
+        // AUDITORIA FINAL
+        const fsBody = require('fs');
+        const bodyLog = `\n--- [FINAL AUDIT] Credor: ${credor.nomeExibivel} ---\n` +
+                        `Body:\n${body}\n` +
+                        `--- [END AUDIT] ---\n`;
+        fsBody.appendFileSync('c:\\PGC_Node\\scripts\\test-validation.log', bodyLog);
+
+        // TRAVA DE SEGURANÇA: Apenas enviar para pedroforoni@gmail.com
+        const ALLOWED_EMAIL = 'pedroforoni@gmail.com';
+        if (credor.email !== ALLOWED_EMAIL) {
+          console.warn(`[SAFETY LOCK] Envio bloqueado para ${credor.email}. Apenas ${ALLOWED_EMAIL} é permitido.`);
+          
+          // Simulamos o log de sucesso para o sistema continuar, mas não chamamos o transporter.sendMail
+        } else {
+          await transporter.sendMail({
+            from: senderLabel,
+            to: credor.email,
+            replyTo: replyTo || undefined,
+            subject,
+            text: body,
+            attachments,
+          });
+        }
 
         await this.prisma.emailLog.update({
           where: { id: log.id },

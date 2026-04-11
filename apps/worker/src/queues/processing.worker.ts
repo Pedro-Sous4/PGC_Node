@@ -412,7 +412,11 @@ function applyDiscountsForCredor(
   baseRows: RowRecord[],
   baseHeaders: string[],
 ): { adjustedRows: MinimoRecord[]; ledger: DiscountLedgerEntry[] } {
-  if (minimoRows.length === 0) {
+  const hasMinimo = minimoRows.length > 0;
+  const hasBase = baseRows.length > 0;
+  const hasHistory = Array.from(historyState.keys()).some((k) => k.startsWith(`${credorSlug}::`));
+
+  if (!hasMinimo && !hasBase && !hasHistory) {
     return { adjustedRows: minimoRows, ledger: [] };
   }
 
@@ -1422,7 +1426,12 @@ export function startProcessingWorker(): Worker {
         throw new Error('PGC_SHEET_NOT_FOUND');
       }
 
-      const baseSheetName = findSheetName(sheetNames, /\bbase\b/);
+      const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
+
+      const baseSheetName =
+        findSheetName(sheetNames, new RegExp(`base\\s*pgc\\s*${numeroPgc}`)) ??
+        findSheetName(sheetNames, /\bbase\b/);
+
       if (!baseSheetName) {
         throw new Error('BASE_SHEET_NOT_FOUND');
       }
@@ -1452,9 +1461,6 @@ export function startProcessingWorker(): Worker {
           },
         });
       }
-
-      const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
-
       const baseSheet = parseTabularSheet(workbook.Sheets[baseSheetName]);
       const extratoSheet = extratoSheetName
         ? parseTabularSheet(workbook.Sheets[extratoSheetName])

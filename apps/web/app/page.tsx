@@ -37,40 +37,17 @@ export default function HomePage() {
 
   const semEmail = rows.filter((row) => !row.email).length;
   const recentes = useMemo(() => {
-    const grouped = new Map<string, { pgc: string; periodo: string; credores: number; enviados: number }>();
-
-    for (const row of rows) {
-      const pgc = row.numero_pgc?.trim() || 'Sem PGC';
-      const periodo = row.periodo?.trim() || '-';
-      const key = `${pgc}::${periodo}`;
-      const current = grouped.get(key);
-
-      if (current) {
-        current.credores += 1;
-        if (row.enviado) current.enviados += 1;
-      } else {
-        grouped.set(key, {
-          pgc,
-          periodo,
-          credores: 1,
-          enviados: row.enviado ? 1 : 0,
-        });
-      }
-    }
-
-    return [...grouped.values()]
-      .sort((a, b) => {
-        const pa = Number.parseInt(a.pgc.replace(/\D/g, ''), 10);
-        const pb = Number.parseInt(b.pgc.replace(/\D/g, ''), 10);
-        if (Number.isNaN(pa) && Number.isNaN(pb)) return b.credores - a.credores;
-        if (Number.isNaN(pa)) return 1;
-        if (Number.isNaN(pb)) return -1;
-        return pb - pa;
-      })
+    return (envioQuery.data?.por_pgc ?? [])
+      .map((item: { numero_pgc: string; total: number }) => ({
+        pgc: item.numero_pgc,
+        credores: item.total,
+        enviados: 0, // Campo simplificado, mantido apenas para tipos se necessário
+      }))
       .slice(0, 5);
-  }, [rows]);
+  }, [envioQuery.data]);
 
-  const pipelineProgress = Math.round((3 + percEmails / 100) * 25);
+  const isDataLoaded = totalCredores > 0;
+  const pipelineProgress = isDataLoaded ? Math.round(50 + (percEmails / 100) * 50) : 0;
 
   return (
     <DashboardShell
@@ -139,25 +116,25 @@ export default function HomePage() {
               <span>{Math.max(totalCredores - enviados, 0)} credores restantes</span>
             </div>
             <div className="ops-pipeline">
-              <article className="ops-stage done">
+              <article className={`ops-stage ${isDataLoaded ? 'done' : 'pending'}`}>
                 <span className="ops-stage-icon"><Upload size={13} strokeWidth={2} /></span>
                 <strong>Importacao</strong>
-                <small>Concluida</small>
+                <small>{isDataLoaded ? 'Concluida' : 'Pendente'}</small>
               </article>
-              <article className="ops-stage done">
+              <article className={`ops-stage ${isDataLoaded ? 'done' : 'pending'}`}>
                 <span className="ops-stage-icon"><CheckCheck size={13} strokeWidth={2} /></span>
                 <strong>Processamento</strong>
-                <small>Concluido</small>
+                <small>{isDataLoaded ? 'Concluido' : 'Pendente'}</small>
               </article>
-              <article className="ops-stage done">
+              <article className={`ops-stage ${isDataLoaded ? 'done' : 'pending'}`}>
                 <span className="ops-stage-icon"><Download size={13} strokeWidth={2} /></span>
                 <strong>Arquivos</strong>
-                <small>Gerados</small>
+                <small>{isDataLoaded ? 'Gerados' : 'Pendente'}</small>
               </article>
-              <article className={`ops-stage ${percEmails === 100 ? 'done' : 'running'}`}>
+              <article className={`ops-stage ${isDataLoaded && percEmails === 100 ? 'done' : isDataLoaded ? 'running' : 'pending'}`}>
                 <span className="ops-stage-icon"><Mail size={13} strokeWidth={2} /></span>
                 <strong>E-mails</strong>
-                <small>{percEmails === 100 ? 'Concluido' : 'Em envio'}</small>
+                <small>{isDataLoaded ? (percEmails === 100 ? 'Concluido' : 'Em envio') : 'Pendente'}</small>
               </article>
             </div>
 
@@ -174,7 +151,6 @@ export default function HomePage() {
               <thead>
                 <tr>
                   <th>PGC</th>
-                  <th>Periodo</th>
                   <th>Credores</th>
                   <th>Status</th>
                   <th>Acoes</th>
@@ -184,9 +160,8 @@ export default function HomePage() {
                 {recentes.map((item, index) => {
                   const concluido = item.credores > 0 && item.enviados >= item.credores;
                   return (
-                    <tr key={`${item.pgc}-${item.periodo}-${index}`}>
+                    <tr key={`${item.pgc}-${index}`}>
                       <td>{item.pgc}</td>
-                      <td>{item.periodo}</td>
                       <td>{item.credores}</td>
                       <td>
                         <StatusBadge status={concluido ? 'Concluido' : 'Em andamento'} />
@@ -199,7 +174,7 @@ export default function HomePage() {
                 })}
                 {recentes.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>Sem processamentos recentes para exibir.</td>
+                    <td colSpan={4}>Sem processamentos recentes para exibir.</td>
                   </tr>
                 ) : null}
               </tbody>
