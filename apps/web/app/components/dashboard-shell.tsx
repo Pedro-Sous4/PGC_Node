@@ -14,7 +14,8 @@ import {
   Upload,
   Users,
 } from 'lucide-react';
-import { authLogout } from '../../lib/api';
+import { authLogout, authMe, AppUser } from '../../lib/api';
+import { useEffect } from 'react';
 import { AvatarBadge, PageHeader } from './ui';
 
 interface DashboardShellProps {
@@ -70,7 +71,29 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
   const navActiveKey = normalizeActiveNav(activeNav);
+
+  useEffect(() => {
+    const isAuthPage = window.location.pathname.startsWith('/auth');
+    
+    authMe()
+      .then(setUser)
+      .catch(() => {
+        if (!isAuthPage) {
+          window.location.href = '/auth/login';
+        }
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filteredNavItems = navItems.filter((item) => {
+    if (!user) return true; // Mostra tudo enquanto carrega para evitar layout shift bruto ou apenas aguarda
+    if (item.key === 'configuracoes' && user.role !== 'ADMIN') return false;
+    return true;
+  });
 
   async function handleLogout() {
     try {
@@ -95,13 +118,14 @@ export function DashboardShell({
 
         <nav className="zen-nav" aria-label="Navegação principal">
           <p className="zen-nav-title">Área de trabalho</p>
-          {navItems.map((item) => {
+          {filteredNavItems.map((item) => {
             const active = item.key === navActiveKey;
             const Icon = item.icon;
             return (
               <a
                 key={item.key}
                 href={item.href}
+                target={(item as any).target}
                 className={`zen-nav-item ${active ? 'is-active' : ''}`}
                 onClick={() => setSidebarOpen(false)}
               >
@@ -128,16 +152,18 @@ export function DashboardShell({
           ) : null}
 
           <div className="zen-user">
-            <AvatarBadge name="Admin Sistema" tone="green" />
-            <div>
-              <strong>Admin</strong>
-              <span>Operações PGC</span>
+            <AvatarBadge name={user?.nome ?? '...'} tone={user?.role === 'ADMIN' ? 'green' : user?.role === 'OPERADOR' ? 'orange' : 'slate'} />
+            <div style={{ maxWidth: '140px', overflow: 'hidden' }}>
+              <strong style={{ display: 'block', textOverflow: 'ellipsis', whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                {user?.nome ?? 'Carregando...'}
+              </strong>
+              <span title={user?.email}>{user?.role ?? 'Aguarde'}</span>
             </div>
             <button
               type="button"
-              className="zen-user-menu-toggle"
-              aria-label="Abrir menu do usuário"
-              onClick={() => setUserMenuOpen((open) => !open)}
+              className="zen-user-toggle"
+              aria-label="Menu"
+              onClick={() => setUserMenuOpen(!userMenuOpen)}
             >
               ...
             </button>
@@ -147,30 +173,29 @@ export function DashboardShell({
 
       <div className="zen-main">
         <header className="zen-topbar">
-          <div className="zen-topbar-left">
-            <button className="zen-menu-btn" type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label="Abrir menu">
-              <span />
-              <span />
-              <span />
-            </button>
-            <div className="zen-search">Painel de gestão de rendimentos e disparos PGC</div>
-          </div>
+          <div className="zen-container">
+            <div className="zen-topbar-left">
+              <button className="zen-menu-btn" type="button" onClick={() => setSidebarOpen((open) => !open)} aria-label="Abrir menu">
+                <span />
+                <span />
+                <span />
+              </button>
+              <div className="zen-search">Painel de gestão de rendimentos e disparos PGC</div>
+            </div>
 
-          <div className="zen-topbar-actions" aria-label="Ações rápidas da barra superior">
-            <button type="button" className="zen-icon-btn" aria-label="Notificações"><Bell size={16} strokeWidth={2.2} /></button>
-            <button type="button" className="zen-icon-btn" aria-label="Informações"><CircleHelp size={16} strokeWidth={2.2} /></button>
+            {onTopActionClick ? (
+              <button type="button" className="zen-primary-btn" onClick={onTopActionClick}>
+                + {topActionLabel ?? 'Nova ação'}
+              </button>
+            ) : null}
           </div>
-
-          {onTopActionClick ? (
-            <button type="button" className="zen-primary-btn" onClick={onTopActionClick}>
-              + {topActionLabel ?? 'Nova ação'}
-            </button>
-          ) : null}
         </header>
 
         <main className="zen-content">
-          <PageHeader title={title} subtitle={subtitle} />
-          {children}
+          <div className="zen-container" style={{ display: 'block' }}>
+            <PageHeader title={title} subtitle={subtitle} />
+            {children}
+          </div>
         </main>
       </div>
     </div>

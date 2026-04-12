@@ -1,17 +1,18 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, FormEvent, useState } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { authLogin, setAuthToken } from '../../../lib/api';
 import { DashboardShell } from '../../components/dashboard-shell';
 import { ActionButton, SectionCard } from '../../components/ui';
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(searchParams.get('error') === 'inactive' ? 'Sua conta redirecionada via login social aguarda aprovação de um administrador.' : null);
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(event: FormEvent) {
@@ -43,12 +44,20 @@ export default function LoginPage() {
         </label>
         <div className="actions-row" style={{ marginTop: 12 }}>
           <ActionButton type="submit" disabled={loading} label={loading ? 'Entrando...' : 'Entrar'} icon="->" />
-          <Link className="btn-link secondary" href="/auth/signup">Criar conta</Link>
           <Link className="btn-link secondary" href="/auth/password-reset-request">Esqueci a senha</Link>
         </div>
-        {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+
+        {error && <p style={{ color: 'var(--danger)', marginTop: 16, textAlign: 'center', fontSize: 13 }}>{error}</p>}
         </SectionCard>
       </form>
     </DashboardShell>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginContent />
+    </Suspense>
   );
 }

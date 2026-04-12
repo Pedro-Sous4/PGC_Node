@@ -17,6 +17,23 @@ export function clearAuthToken() {
   window.localStorage.removeItem(TOKEN_KEY);
 }
 
+/**
+ * Auxiliar para fetch com token de autenticação automático
+ */
+async function fetchWithAuth(url: string, options: RequestInit = {}): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers || {});
+  
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  
+  return fetch(url, {
+    ...options,
+    headers,
+  });
+}
+
 export interface Grupo {
   id: string;
   nome: string;
@@ -28,6 +45,17 @@ export interface EmpresaPagadora {
   nome_curto: string;
   nome_completo: string;
   cnpj?: string;
+}
+
+export interface AppUser {
+  id: string;
+  nome: string;
+  email: string;
+  role: 'ADMIN' | 'OPERADOR' | 'CONSULTA';
+  active: boolean;
+  provider?: string;
+  created_at: string;
+  last_login_at?: string;
 }
 
 export interface CredorRow {
@@ -42,6 +70,7 @@ export interface CredorRow {
   data_envio?: string;
   grupo?: Grupo;
   valor_total: number;
+  valor_pgc: number;
 }
 
 export interface JobState {
@@ -161,7 +190,7 @@ export interface EmailSendProgress {
 }
 
 export async function createUploadJob(flow: string, credores: string[]): Promise<{ request_id: string }> {
-  const res = await fetch(`${API}/jobs/pgc/upload`, {
+  const res = await fetchWithAuth(`${API}/jobs/pgc/upload`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ flow, credores }),
@@ -172,13 +201,13 @@ export async function createUploadJob(flow: string, credores: string[]): Promise
 }
 
 export async function getJobStatus(requestId: string): Promise<JobState> {
-  const res = await fetch(`${API}/jobs/${requestId}/status`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/jobs/${requestId}/status`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao obter status');
   return res.json() as Promise<JobState>;
 }
 
 export async function reprocessJob(requestId: string, credores: string[]): Promise<void> {
-  const res = await fetch(`${API}/jobs/${requestId}/reprocess`, {
+  const res = await fetchWithAuth(`${API}/jobs/${requestId}/reprocess`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ credores }),
@@ -195,7 +224,7 @@ export function streamJob(requestId: string, onMessage: (state: JobState) => voi
 }
 
 export async function listGrupos(): Promise<Grupo[]> {
-  const res = await fetch(`${API}/grupos`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/grupos`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao listar grupos');
   return res.json() as Promise<Grupo[]>;
 }
@@ -216,19 +245,64 @@ export async function listCredores(params: {
   query.set('skip', String(params.skip ?? 0));
   query.set('take', String(params.take ?? 20));
 
-  const res = await fetch(`${API}/credores?${query.toString()}`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/credores?${query.toString()}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao listar credores');
   return res.json() as Promise<{ data: CredorRow[]; page: { skip: number; take: number; total: number } }>;
 }
 
+export async function listUsers(): Promise<AppUser[]> {
+  const res = await fetchWithAuth(`${API}/users`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Falha ao listar usuários');
+  return res.json() as Promise<AppUser[]>;
+}
+
+export async function updateUserStatus(id: string, active: boolean) {
+  const res = await fetchWithAuth(`${API}/users/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ active }),
+  });
+  if (!res.ok) throw new Error('Falha ao atualizar status do usuário');
+  return res.json();
+}
+
+export async function updateUserRole(id: string, role: string) {
+  const res = await fetchWithAuth(`${API}/users/${id}/role`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ role }),
+  });
+  if (!res.ok) throw new Error('Falha ao atualizar permissão do usuário');
+  return res.json();
+}
+
+export async function deleteUser(id: string) {
+  const res = await fetchWithAuth(`${API}/users/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Falha ao excluir usuário');
+  return res.json();
+}
+
+export async function adminCreateUser(payload: any) {
+  const res = await fetchWithAuth(`${API}/users`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.message || 'Falha ao criar usuário administrativo');
+  }
+  return res.json();
+}
+
 export async function getCredor(id: string) {
-  const res = await fetch(`${API}/credores/${id}`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/credores/${id}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao obter credor');
   return res.json();
 }
 
 export async function openCredorFolder(id: string, numero_pgc?: string) {
-  const res = await fetch(`${API}/credores/${id}/open-folder`, {
+  const res = await fetchWithAuth(`${API}/credores/${id}/open-folder`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ numero_pgc }),
@@ -256,7 +330,7 @@ export async function createCredor(payload: {
   periodo?: string;
   grupoId?: string;
 }) {
-  const res = await fetch(`${API}/credores`, {
+  const res = await fetchWithAuth(`${API}/credores`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -274,7 +348,7 @@ export async function updateCredor(
     grupoId?: string;
   },
 ) {
-  const res = await fetch(`${API}/credores/${id}`, {
+  const res = await fetchWithAuth(`${API}/credores/${id}`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -284,7 +358,7 @@ export async function updateCredor(
 }
 
 export async function batchCredores(path: 'marcar-enviado' | 'marcar-nao-enviado' | 'excluir', ids: string[]) {
-  const res = await fetch(`${API}/credores/batch/${path}`, {
+  const res = await fetchWithAuth(`${API}/credores/batch/${path}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ ids }),
@@ -313,7 +387,7 @@ export function exportCredoresXlsxUrl() {
 export async function uploadEmails(file: File, allowProtectedUpdate = false) {
   const form = new FormData();
   form.append('file', file);
-  const res = await fetch(`${API}/uploads/emails?allow_protected_update=${allowProtectedUpdate}`, {
+  const res = await fetchWithAuth(`${API}/uploads/emails?allow_protected_update=${allowProtectedUpdate}`, {
     method: 'POST',
     body: form,
   });
@@ -335,23 +409,26 @@ export async function uploadEmails(file: File, allowProtectedUpdate = false) {
 
 export async function getDashboardEnvio(grupoId?: string) {
   const suffix = grupoId ? `?grupoId=${encodeURIComponent(grupoId)}` : '';
-  const res = await fetch(`${API}/dashboard/envio${suffix}`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/dashboard/envio${suffix}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao carregar dashboard');
   return res.json();
 }
 
-export async function getEmailTemplate() {
-  const res = await fetch(`${API}/emails/template`, { cache: 'no-store' });
+export interface EmailTemplate {
+  mensagem_laghetto_golden: string;
+  mensagem_laghetto_sports: string;
+  texto_minimo: string;
+  texto_descontos: string;
+}
+
+export async function getEmailTemplate(): Promise<EmailTemplate> {
+  const res = await fetchWithAuth(`${API}/emails/template`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao obter template de e-mail');
   return res.json();
 }
 
-export async function updateEmailTemplate(payload: {
-  mensagem_principal: string;
-  texto_minimo: string;
-  texto_descontos: string;
-}) {
-  const res = await fetch(`${API}/emails/template`, {
+export async function updateEmailTemplate(payload: EmailTemplate) {
+  const res = await fetchWithAuth(`${API}/emails/template`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -366,8 +443,11 @@ export async function enviarEmails(payload: {
   escopo: 'todos' | 'credor' | 'empresa';
   credorIds?: string[];
   empresa_nome_curto?: string;
+  custom_mensagem_principal?: string;
+  custom_texto_minimo?: string;
+  custom_texto_descontos?: string;
 }): Promise<EmailSendResult> {
-  const res = await fetch(`${API}/emails/enviar`, {
+  const res = await fetchWithAuth(`${API}/emails/enviar`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -382,8 +462,11 @@ export async function iniciarEnvioEmails(payload: {
   escopo: 'todos' | 'credor' | 'empresa';
   credorIds?: string[];
   empresa_nome_curto?: string;
+  custom_mensagem_principal?: string;
+  custom_texto_minimo?: string;
+  custom_texto_descontos?: string;
 }): Promise<{ dispatchId: string }> {
-  const res = await fetch(`${API}/emails/enviar/async`, {
+  const res = await fetchWithAuth(`${API}/emails/enviar/async`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -393,7 +476,7 @@ export async function iniciarEnvioEmails(payload: {
 }
 
 export async function getEnvioEmailsProgresso(dispatchId: string): Promise<EmailSendProgress> {
-  const res = await fetch(`${API}/emails/enviar/progresso/${encodeURIComponent(dispatchId)}`, {
+  const res = await fetchWithAuth(`${API}/emails/enviar/progresso/${encodeURIComponent(dispatchId)}`, {
     cache: 'no-store',
   });
   if (!res.ok) throw new Error('Falha ao consultar progresso do envio');
@@ -401,13 +484,13 @@ export async function getEnvioEmailsProgresso(dispatchId: string): Promise<Email
 }
 
 export async function getEmailReport(limit = 100) {
-  const res = await fetch(`${API}/emails/relatorio?limit=${limit}`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/emails/relatorio?limit=${limit}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao obter relatorio de e-mails');
   return res.json();
 }
 
 export async function getSystemSettings(): Promise<SystemSettings> {
-  const res = await fetch(`${API}/system-settings`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/system-settings`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao carregar configuracoes do sistema');
   return res.json() as Promise<SystemSettings>;
 }
@@ -415,7 +498,7 @@ export async function getSystemSettings(): Promise<SystemSettings> {
 export async function updateSystemSettings(
   payload: Partial<SystemSettings> & { auditActor?: string },
 ): Promise<SystemSettings> {
-  const res = await fetch(`${API}/system-settings`, {
+  const res = await fetchWithAuth(`${API}/system-settings`, {
     method: 'PUT',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -425,7 +508,7 @@ export async function updateSystemSettings(
 }
 
 export async function testSystemSender(to?: string) {
-  const res = await fetch(`${API}/system-settings/test-email`, {
+  const res = await fetchWithAuth(`${API}/system-settings/test-email`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ to }),
@@ -460,19 +543,15 @@ export async function authLogin(payload: { email: string; senha: string }) {
     body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error('Falha no login');
-  return res.json() as Promise<{ access_token: string; user: { id: string; nome: string; email: string } }>;
+  return res.json() as Promise<{ access_token: string; user: AppUser }>;
 }
 
 export async function authMe() {
-  const token = getAuthToken();
-  if (!token) throw new Error('Nao autenticado');
-
-  const res = await fetch(`${API}/auth/me`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const res = await fetchWithAuth(`${API}/auth/me`, {
     cache: 'no-store',
   });
   if (!res.ok) throw new Error('Sessao invalida');
-  return res.json();
+  return res.json() as Promise<AppUser>;
 }
 
 export async function authChangePassword(payload: { senhaAtual: string; novaSenha: string }) {
@@ -520,7 +599,7 @@ export async function sportsUpload(file: File, credoresCsv = '') {
   const form = new FormData();
   form.append('file', file);
   const suffix = credoresCsv.trim() ? `?credores=${encodeURIComponent(credoresCsv)}` : '';
-  const res = await fetch(`${API}/laghetto-sports/upload${suffix}`, {
+  const res = await fetchWithAuth(`${API}/laghetto-sports/upload${suffix}`, {
     method: 'POST',
     body: form,
   });
@@ -529,19 +608,19 @@ export async function sportsUpload(file: File, credoresCsv = '') {
 }
 
 export async function sportsStatus(requestId: string) {
-  const res = await fetch(`${API}/laghetto-sports/${requestId}/status`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/laghetto-sports/${requestId}/status`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao consultar status Sports');
   return res.json();
 }
 
 export async function sportsLogs(requestId: string) {
-  const res = await fetch(`${API}/laghetto-sports/${requestId}/logs`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/laghetto-sports/${requestId}/logs`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao consultar logs Sports');
   return res.json();
 }
 
 export async function sportsDownload(requestId: string) {
-  const res = await fetch(`${API}/laghetto-sports/${requestId}/download`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/laghetto-sports/${requestId}/download`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha no download Sports');
   return res.json() as Promise<{ request_id: string; file_name: string; content_base64: string }>;
 }
@@ -550,7 +629,7 @@ export async function lgmUpload(file: File, credoresCsv = '') {
   const form = new FormData();
   form.append('file', file);
   const suffix = credoresCsv.trim() ? `?credores=${encodeURIComponent(credoresCsv)}` : '';
-  const res = await fetch(`${API}/lgm/upload${suffix}`, {
+  const res = await fetchWithAuth(`${API}/lgm/upload${suffix}`, {
     method: 'POST',
     body: form,
   });
@@ -561,7 +640,7 @@ export async function lgmUpload(file: File, credoresCsv = '') {
 export async function lgmListArquivos(numeroPgc: string, empresa?: string) {
   const query = new URLSearchParams({ numero_pgc: numeroPgc });
   if (empresa?.trim()) query.set('empresa', empresa.trim());
-  const res = await fetch(`${API}/lgm/arquivos?${query.toString()}`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/lgm/arquivos?${query.toString()}`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao listar arquivos por PGC/empresa');
   return res.json() as Promise<{
     numero_pgc: string;
@@ -578,31 +657,31 @@ export async function lgmListArquivos(numeroPgc: string, empresa?: string) {
 }
 
 export async function listEmpresasPagadoras(): Promise<EmpresaPagadora[]> {
-  const res = await fetch(`${API}/empresas-pagadoras`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/empresas-pagadoras`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao listar empresas pagadoras');
   return res.json() as Promise<EmpresaPagadora[]>;
 }
 
 export async function lgmErrors(requestId: string) {
-  const res = await fetch(`${API}/lgm/${requestId}/errors.json`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/lgm/${requestId}/errors.json`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao consultar errors.json do LGM');
   return res.json();
 }
 
 export async function lgmCredores(requestId: string) {
-  const res = await fetch(`${API}/lgm/${requestId}/credores.json`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/lgm/${requestId}/credores.json`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao consultar credores.json do LGM');
   return res.json();
 }
 
 export async function lgmLogs(requestId: string) {
-  const res = await fetch(`${API}/lgm/${requestId}/logs`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/lgm/${requestId}/logs`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha ao consultar logs do LGM');
   return res.json();
 }
 
 export async function lgmDownload(requestId: string) {
-  const res = await fetch(`${API}/lgm/${requestId}/download`, { cache: 'no-store' });
+  const res = await fetchWithAuth(`${API}/lgm/${requestId}/download`, { cache: 'no-store' });
   if (!res.ok) throw new Error('Falha no download final do LGM');
   return res.json() as Promise<{ request_id: string; file_name: string; content_base64: string }>;
 }
@@ -612,7 +691,7 @@ export async function lgmResolveError(
   errorId: string,
   payload: { action: 'resolve' | 'ignore'; note?: string },
 ) {
-  const res = await fetch(`${API}/lgm/${requestId}/errors/${errorId}/resolve`, {
+  const res = await fetchWithAuth(`${API}/lgm/${requestId}/errors/${errorId}/resolve`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -620,3 +699,4 @@ export async function lgmResolveError(
   if (!res.ok) throw new Error('Falha ao resolver erro do LGM');
   return res.json();
 }
+

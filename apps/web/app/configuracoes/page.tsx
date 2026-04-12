@@ -3,13 +3,20 @@
 import { CSSProperties, FormEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { DashboardShell } from '../components/dashboard-shell';
 import {
+  AppUser,
   authMe,
+  deleteUser,
+  EmailTemplate,
   getEmailTemplate,
   getSystemSettings,
+  listUsers,
   SystemSettings,
   testSystemSender,
   updateEmailTemplate,
   updateSystemSettings,
+  updateUserRole,
+  updateUserStatus,
+  adminCreateUser,
 } from '../../lib/api';
 import { ActionButton, SectionCard } from '../components/ui';
 
@@ -51,9 +58,12 @@ const EMPTY: SystemSettings = {
 
 export default function ConfiguracoesPage() {
   const [settings, setSettings] = useState<SystemSettings>(EMPTY);
-  const [mailTab, setMailTab] = useState<'email' | 'smtp' | 'texto-default' | 'empresas-cnpj' | 'auditoria'>('email');
-  const [emailTemplate, setEmailTemplate] = useState({
-    mensagem_principal: '',
+  const [mailTab, setMailTab] = useState<'email' | 'smtp' | 'texto-default' | 'empresas-cnpj' | 'auditoria' | 'usuarios' | 'api'>('email');
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [emailTemplate, setEmailTemplate] = useState<EmailTemplate>({
+    mensagem_laghetto_golden: '',
+    mensagem_laghetto_sports: '',
     texto_minimo: '',
     texto_descontos: '',
   });
@@ -62,18 +72,24 @@ export default function ConfiguracoesPage() {
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState('');
   const [actorEmail, setActorEmail] = useState('unknown');
+  
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'CONSULTA' });
+  const [creating, setCreating] = useState(false);
 
-  const mensagemPrincipalRef = useRef<HTMLTextAreaElement | null>(null);
+  const msgGoldenRef = useRef<HTMLTextAreaElement | null>(null);
+  const msgSportsRef = useRef<HTMLTextAreaElement | null>(null);
   const textoMinimoRef = useRef<HTMLTextAreaElement | null>(null);
   const textoDescontosRef = useRef<HTMLTextAreaElement | null>(null);
 
-  function getTemplateTextareaRef(field: 'mensagem_principal' | 'texto_minimo' | 'texto_descontos') {
-    if (field === 'mensagem_principal') return mensagemPrincipalRef;
+  function getTemplateTextareaRef(field: keyof EmailTemplate) {
+    if (field === 'mensagem_laghetto_golden') return msgGoldenRef;
+    if (field === 'mensagem_laghetto_sports') return msgSportsRef;
     if (field === 'texto_minimo') return textoMinimoRef;
     return textoDescontosRef;
   }
 
-  function insertTemplateVar(field: 'mensagem_principal' | 'texto_minimo' | 'texto_descontos', variable: string) {
+  function insertTemplateVar(field: keyof EmailTemplate, variable: string) {
     const textAreaRef = getTemplateTextareaRef(field);
     const element = textAreaRef.current;
 
@@ -82,7 +98,7 @@ export default function ConfiguracoesPage() {
       const end = element.selectionEnd ?? element.value.length;
 
       setEmailTemplate((prev) => {
-        const current = prev[field] ?? '';
+        const current = (prev[field] as string) ?? '';
         const next = `${current.slice(0, start)}${variable}${current.slice(end)}`;
         return {
           ...prev,
@@ -101,7 +117,7 @@ export default function ConfiguracoesPage() {
     }
 
     setEmailTemplate((prev) => {
-      const current = prev[field] ?? '';
+      const current = (prev[field] as string) ?? '';
       const separator = current.length === 0 || current.endsWith('\n') ? '' : ' ';
       return {
         ...prev,
@@ -115,7 +131,8 @@ export default function ConfiguracoesPage() {
       const [loaded, emailTemplate] = await Promise.all([getSystemSettings(), getEmailTemplate()]);
       setSettings(loaded);
       setEmailTemplate({
-        mensagem_principal: emailTemplate?.mensagem_principal ?? '',
+        mensagem_laghetto_golden: emailTemplate?.mensagem_laghetto_golden ?? '',
+        mensagem_laghetto_sports: emailTemplate?.mensagem_laghetto_sports ?? '',
         texto_minimo: emailTemplate?.texto_minimo ?? '',
         texto_descontos: emailTemplate?.texto_descontos ?? '',
       });
@@ -127,6 +144,71 @@ export default function ConfiguracoesPage() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (mailTab === 'usuarios') {
+      void loadUsers();
+    }
+  }, [mailTab]);
+
+  async function loadUsers() {
+    setLoadingUsers(true);
+    try {
+      const data = await listUsers();
+      setUsers(data);
+    } catch (err) {
+      setMessage(`Erro ao carregar usuários: ${(err as Error).message}`);
+    } finally {
+      setLoadingUsers(false);
+    }
+  }
+
+  async function handleToggleUserStatus(id: string, current: boolean) {
+    try {
+      await updateUserStatus(id, !current);
+      await loadUsers();
+      setMessage('Status do usuário atualizado.');
+    } catch (err) {
+      setMessage(`Erro: ${(err as Error).message}`);
+    }
+  }
+
+  async function handleUpdateUserRole(id: string, role: string) {
+    try {
+      await updateUserRole(id, role);
+      await loadUsers();
+      setMessage('Permissão do usuário atualizada.');
+    } catch (err) {
+      setMessage(`Erro: ${(err as Error).message}`);
+    }
+  }
+
+  async function handleDeleteUser(id: string) {
+    if (!confirm('Tem certeza que deseja excluir este usuário?')) return;
+    try {
+      await deleteUser(id);
+      await loadUsers();
+      setMessage('Usuário excluído.');
+    } catch (err) {
+      setMessage(`Erro: ${(err as Error).message}`);
+    }
+  }
+
+  async function handleAdminCreateUser(e: FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    try {
+      await adminCreateUser(newUser);
+      setMessage('Usuário criado com sucesso.');
+      setShowUserModal(false);
+      setNewUser({ name: '', email: '', password: '', role: 'CONSULTA' });
+      await loadUsers();
+    } catch (err) {
+      setMessage(`Erro ao criar usuário: ${(err as Error).message}`);
+    } finally {
+      setCreating(false);
+    }
+  }
 
   async function handleSave(event: FormEvent) {
     event.preventDefault();
@@ -273,12 +355,32 @@ export default function ConfiguracoesPage() {
           <button
             type="button"
             role="tab"
+            aria-selected={mailTab === 'usuarios'}
+            aria-controls="tab-usuarios-content"
+            onClick={() => setMailTab('usuarios')}
+            style={mailTab === 'usuarios' ? { ...pillBaseStyle, ...pillActiveStyle } : pillBaseStyle}
+          >
+            Usuários
+          </button>
+          <button
+            type="button"
+            role="tab"
             aria-selected={mailTab === 'auditoria'}
             aria-controls="tab-auditoria-content"
             onClick={() => setMailTab('auditoria')}
             style={mailTab === 'auditoria' ? { ...pillBaseStyle, ...pillActiveStyle } : pillBaseStyle}
           >
             Auditoria
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mailTab === 'api'}
+            aria-controls="tab-api-content"
+            onClick={() => setMailTab('api')}
+            style={mailTab === 'api' ? { ...pillBaseStyle, ...pillActiveStyle } : pillBaseStyle}
+          >
+            API / Doc
           </button>
         </div>
 
@@ -291,7 +393,11 @@ export default function ConfiguracoesPage() {
                 ? 'Visualize o texto padrão da mensagem principal usada no envio.'
               : mailTab === 'empresas-cnpj'
                 ? 'Cadastre as empresas pagadoras e CNPJs usados para preencher o arquivo de emissao.'
-              : 'Acompanhe quem alterou as configurações e quando cada mudança ocorreu.'}
+                : mailTab === 'usuarios'
+                  ? 'Gerencie quem tem acesso ao sistema e quais são suas permissões.'
+                  : mailTab === 'api'
+                    ? 'Acesse a documentação técnica das APIs do sistema (Swagger).'
+                    : 'Acompanhe quem alterou as configurações e quando cada mudança ocorreu.'}
         </p>
 
         <form className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))' }} onSubmit={handleSave}>
@@ -462,83 +568,113 @@ export default function ConfiguracoesPage() {
             </div>
           ) : mailTab === 'texto-default' ? (
             <div id="tab-texto-default-content" role="tabpanel">
-              <label>
-                Mensagem principal (default)
-                <textarea
-                  ref={mensagemPrincipalRef}
-                  value={emailTemplate.mensagem_principal}
-                  onChange={(e) =>
-                    setEmailTemplate((prev) => ({
-                      ...prev,
-                      mensagem_principal: e.target.value,
-                    }))
-                  }
-                  rows={16}
-                  style={{ minHeight: 320 }}
-                />
-                <div style={varHelpStyle}>
-                  Variáveis disponíveis: {'{credor.nome}'}, {'{historico.numero_pgc}'}, {'{historico.periodo}'}, {'{sistema.remetente}'}, {'{info_minimo}'}, {'{info_descontos}'}.
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                {/* CARD GOLDEN */}
+                <div className="card soft-primary" style={{ padding: 16 }}>
+                  <h4 style={{ marginTop: 0 }}>Laghetto Golden</h4>
+                  <label>
+                    Mensagem principal
+                    <textarea
+                      ref={msgGoldenRef}
+                      value={emailTemplate.mensagem_laghetto_golden}
+                      onChange={(e) =>
+                        setEmailTemplate((prev) => ({
+                          ...prev,
+                          mensagem_laghetto_golden: e.target.value,
+                        }))
+                      }
+                      rows={12}
+                    />
+                  </label>
+                  <div style={varHelpStyle}>
+                    Variáveis: {'{credor.nome}'}, {'{historico.numero_pgc}'}, {'{historico.periodo}'}, {'{info_minimo}'}, {'{info_descontos}'}.
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_golden', '{credor.nome}')}>nome</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_golden', '{historico.numero_pgc}')}>pgc</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_golden', '{historico.periodo}')}>período</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_golden', '{info_minimo}')}>minimo</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_golden', '{info_descontos}')}>descontos</button>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{credor.nome}')}>credor.nome</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{historico.numero_pgc}')}>historico.numero_pgc</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{historico.periodo}')}>historico.periodo</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{sistema.remetente}')}>sistema.remetente</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{info_minimo}')}>info_minimo</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('mensagem_principal', '{info_descontos}')}>info_descontos</button>
+
+                {/* CARD SPORTS */}
+                <div className="card soft-accent" style={{ padding: 16 }}>
+                  <h4 style={{ marginTop: 0 }}>Laghetto Sports</h4>
+                  <label>
+                    Mensagem principal
+                    <textarea
+                      ref={msgSportsRef}
+                      value={emailTemplate.mensagem_laghetto_sports}
+                      onChange={(e) =>
+                        setEmailTemplate((prev) => ({
+                          ...prev,
+                          mensagem_laghetto_sports: e.target.value,
+                        }))
+                      }
+                      rows={12}
+                    />
+                  </label>
+                  <div style={varHelpStyle}>
+                    Variáveis: {'{credor.nome}'}, {'{historico.numero_pgc}'}, {'{historico.periodo}'}, {'{info_minimo}'}, {'{info_descontos}'}.
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_sports', '{credor.nome}')}>nome</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_sports', '{historico.numero_pgc}')}>pgc</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_sports', '{historico.periodo}')}>período</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_sports', '{info_minimo}')}>minimo</button>
+                    <button type="button" className="secondary tiny" onClick={() => insertTemplateVar('mensagem_laghetto_sports', '{info_descontos}')}>descontos</button>
+                  </div>
                 </div>
-              </label>
-              <label>
-                Texto default de mínimo
-                <textarea
-                  ref={textoMinimoRef}
-                  value={emailTemplate.texto_minimo}
-                  onChange={(e) =>
-                    setEmailTemplate((prev) => ({
-                      ...prev,
-                      texto_minimo: e.target.value,
-                    }))
-                  }
-                  rows={4}
-                  style={{ minHeight: 100 }}
-                />
-                <div style={varHelpStyle}>
-                  Variáveis disponíveis: {'{minimo.valor}'}, {'{minimo.empresa}'}, {'{minimo.cnpj}'}.
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.valor}')}>minimo.valor</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.empresa}')}>minimo.empresa</button>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.cnpj}')}>minimo.cnpj</button>
-                </div>
-              </label>
-              <label>
-                Texto default de descontos
-                <textarea
-                  ref={textoDescontosRef}
-                  value={emailTemplate.texto_descontos}
-                  onChange={(e) =>
-                    setEmailTemplate((prev) => ({
-                      ...prev,
-                      texto_descontos: e.target.value,
-                    }))
-                  }
-                  rows={6}
-                  style={{ minHeight: 140 }}
-                />
-                <div style={varHelpStyle}>
-                  Variáveis disponíveis: {'{linhas_descontos}'}.
-                </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                  <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_descontos', '{linhas_descontos}')}>linhas_descontos</button>
-                </div>
-              </label>
-              <div style={{ display: 'flex', marginTop: 10 }}>
+              </div>
+
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 20, marginTop: 12 }}>
+                <label>
+                  Texto default de mínimo
+                  <textarea
+                    ref={textoMinimoRef}
+                    value={emailTemplate.texto_minimo}
+                    onChange={(e) =>
+                      setEmailTemplate((prev) => ({
+                        ...prev,
+                        texto_minimo: e.target.value,
+                      }))
+                    }
+                    rows={4}
+                  />
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                    <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.valor}')}>minimo.valor</button>
+                    <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.empresa}')}>minimo.empresa</button>
+                    <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_minimo', '{minimo.cnpj}')}>minimo.cnpj</button>
+                  </div>
+                </label>
+
+                <label>
+                  Texto default de descontos
+                  <textarea
+                    ref={textoDescontosRef}
+                    value={emailTemplate.texto_descontos}
+                    onChange={(e) =>
+                      setEmailTemplate((prev) => ({
+                        ...prev,
+                        texto_descontos: e.target.value,
+                      }))
+                    }
+                    rows={4}
+                  />
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                    <button type="button" className="secondary" onClick={() => insertTemplateVar('texto_descontos', '{linhas_descontos}')}>linhas_descontos</button>
+                  </div>
+                </label>
+              </div>
+
+              <div style={{ display: 'flex', marginTop: 16 }}>
                 <ActionButton
                   type="button"
-                  variant="secondary"
+                  variant="primary"
                   onClick={handleSaveDefaultTemplate}
                   disabled={savingTemplate}
-                  label={savingTemplate ? 'Salvando texto...' : 'Salvar texto default'}
+                  label={savingTemplate ? 'Salvando textos...' : 'Salvar todos os textos padrão'}
                 />
               </div>
             </div>
@@ -575,6 +711,106 @@ export default function ConfiguracoesPage() {
               </div>
               <div style={{ display: 'flex', marginTop: 12 }}>
                 <ActionButton type="button" variant="secondary" onClick={addEmpresaCnpjRow} label="Adicionar empresa" />
+              </div>
+            </div>
+          ) : mailTab === 'usuarios' ? (
+            <div id="tab-usuarios-content" role="tabpanel">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <p style={{ margin: 0, color: 'var(--muted)' }}>
+                  Gerencie quem tem acesso ao sistema e quais são suas permissões.
+                </p>
+                <ActionButton 
+                  label="Novo Usuário" 
+                  onClick={() => setShowUserModal(true)}
+                  icon="+"
+                />
+              </div>
+              {loadingUsers ? (
+                <p>Carregando usuários...</p>
+              ) : (
+                <div className="card" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border)' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                    <thead>
+                      <tr style={{ background: 'var(--bg-soft)', borderBottom: '1px solid var(--border)' }}>
+                        <th style={{ textAlign: 'left', padding: '12px 16px' }}>Nome / E-mail</th>
+                        <th style={{ textAlign: 'left', padding: '12px 16px' }}>Função</th>
+                        <th style={{ textAlign: 'center', padding: '12px 16px' }}>Status</th>
+                        <th style={{ textAlign: 'right', padding: '12px 16px' }}>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u) => (
+                        <tr key={u.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '12px 16px' }}>
+                            <div style={{ fontWeight: 600 }}>{u.nome}</div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)' }}>{u.email}</div>
+                          </td>
+                          <td style={{ padding: '12px 16px' }}>
+                            <select
+                              value={u.role}
+                              onChange={(e) => handleUpdateUserRole(u.id, e.target.value)}
+                              style={{ padding: '4px 8px', fontSize: 12, borderRadius: 6 }}
+                            >
+                              <option value="ADMIN">ADMIN</option>
+                              <option value="OPERADOR">OPERADOR</option>
+                              <option value="CONSULTA">CONSULTA</option>
+                            </select>
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                            <span
+                              style={{
+                                display: 'inline-block',
+                                padding: '4px 10px',
+                                borderRadius: 99,
+                                fontSize: 11,
+                                fontWeight: 700,
+                                background: u.active ? '#dcfce7' : '#fee2e2',
+                                color: u.active ? '#166534' : '#991b1b',
+                              }}
+                            >
+                              {u.active ? 'ATIVO' : 'PENDENTE'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                              <button
+                                type="button"
+                                className="secondary tiny"
+                                onClick={() => handleToggleUserStatus(u.id, u.active)}
+                              >
+                                {u.active ? 'Suspender' : 'Ativar'}
+                              </button>
+                              <button
+                                type="button"
+                                className="danger tiny"
+                                onClick={() => handleDeleteUser(u.id)}
+                              >
+                                Excluir
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : mailTab === 'api' ? (
+            <div id="tab-api-content" role="tabpanel">
+              <div className="card soft-primary" style={{ padding: 24, textAlign: 'center' }}>
+                <h3 style={{ marginTop: 0 }}>Documentação Técnica da API</h3>
+                <p style={{ color: 'var(--muted)', marginBottom: 20 }}>
+                  Acesse o Swagger UI para visualizar todos os endpoints, modelos de dados e testar as requisições do sistema.
+                </p>
+                <a 
+                  href="/api-proxy/docs" 
+                  target="_blank" 
+                  className="ui-btn primary"
+                  style={{ display: 'inline-flex', padding: '12px 24px', textDecoration: 'none' }}
+                >
+                  Abrir Swagger UI
+                </a>
               </div>
             </div>
           ) : (
@@ -700,6 +936,85 @@ export default function ConfiguracoesPage() {
 
         {message ? <p style={{ marginTop: 10 }}>{message}</p> : null}
       </SectionCard>
+
+      {showUserModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.4)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          padding: 20
+        }}>
+          <div style={{ width: '100%', maxWidth: '500px' }}>
+            <SectionCard title="Cadastrar Novo Usuário" badge="Administração" tone="primary">
+              <form onSubmit={handleAdminCreateUser}>
+                <label>
+                  Nome completo
+                  <input 
+                    value={newUser.name} 
+                    onChange={e => setNewUser(p => ({ ...p, name: e.target.value }))} 
+                    required 
+                    placeholder="Ex: João Silva"
+                  />
+                </label>
+                <label>
+                  E-mail institucional
+                  <input 
+                    type="email" 
+                    value={newUser.email} 
+                    onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} 
+                    required 
+                    placeholder="email@empresa.com.br"
+                  />
+                </label>
+                <label>
+                  Senha inicial
+                  <input 
+                    type="password" 
+                    value={newUser.password} 
+                    onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} 
+                    required 
+                    placeholder="Mínimo 6 caracteres"
+                  />
+                </label>
+                <label>
+                  Cargo / Permissão
+                  <select 
+                    value={newUser.role} 
+                    onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                  >
+                    <option value="ADMIN">Administrador (Acesso total)</option>
+                    <option value="OPERADOR">Operador (Upload e Disparo)</option>
+                    <option value="CONSULTA">Consulta (Leitura apenas)</option>
+                  </select>
+                </label>
+
+                <div className="actions-row" style={{ marginTop: 20 }}>
+                  <ActionButton 
+                    type="submit" 
+                    label={creating ? 'Criando...' : 'Criar Usuário'} 
+                    disabled={creating} 
+                  />
+                  <button 
+                    type="button" 
+                    className="secondary" 
+                    onClick={() => setShowUserModal(false)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            </SectionCard>
+          </div>
+        </div>
+      )}
     </DashboardShell>
   );
 }
