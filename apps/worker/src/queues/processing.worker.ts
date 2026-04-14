@@ -818,8 +818,8 @@ function derivePgcMasterRecords(
   };
 
   const colCredor = findLastColumnIndex([/\bcredor\b/]);
-  const colMinimo = findLastColumnIndex([/m[íi]nimo\/fixo/, /valor\s*fixo/, /m[íi]nimo\s*garantido/, /m[íi]nimo\s*reten[çc][ãa]o/]);
-  const colBruto = findLastColumnIndex([/valor\s*bruto/, /total\s*geral/]);
+  const colMinimo = findLastColumnIndex([/minimo\/fixo\s*garantido\s*para\s*emissao\s*nf/i, /m[íi]nimo\/fixo/, /valor\s*fixo/, /m[íi]nimo\s*garantido/, /m[íi]nimo\s*reten[çc][ãa]o/]);
+  const colBruto = findLastColumnIndex([/valor\s*liquido\s*comiss[ãa]o\s*a\s*pagar/i, /valor\s*bruto/, /total\s*geral/]);
   const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/, /emissor/]);
   const colCnpj = findLastColumnIndex([/\bcnpj\b/]);
   
@@ -859,18 +859,20 @@ function derivePgcMasterRecords(
     let minimoAcumulado = colMinimo >= 0 ? parseNumber(row[colMinimo]) : 0;
     let descricaoMinimo = 'Mínimo garantido';
     
-    // Procura por colunas que tenham textos específicos no conteúdo
-    for (let col = 0; col < maxCols; col += 1) {
-      const cellValue = toDisplayText(row[col]);
-      const match = cellValue.match(/m[íi]nimo\s*garantido|m[íi]nimo\s*reten[çc][ãa]o|m[íi]nimo/i);
-      if (match) {
-        descricaoMinimo = match[0];
-        const valAtual = parseNumber(row[col]);
-        const valProximo = parseNumber(row[col + 1]);
-        const valDetectado = Math.max(valAtual, valProximo);
-        if (valDetectado > 0) {
-          minimoAcumulado = valDetectado;
-          break; // Pega o primeiro significativo
+    // Procura por colunas que tenham textos específicos no conteúdo (Apenas se não achamos a coluna AO via header)
+    if (colMinimo < 0) {
+      for (let col = 0; col < maxCols; col += 1) {
+        const cellValue = toDisplayText(row[col]);
+        const match = cellValue.match(/m[íi]nimo\s*garantido|m[íi]nimo\s*reten[çc][ãa]o|m[íi]nimo/i);
+        if (match) {
+          descricaoMinimo = match[0];
+          const valAtual = parseNumber(row[col]);
+          const valProximo = parseNumber(row[col + 1]);
+          const valDetectado = Math.max(valAtual, valProximo);
+          if (valDetectado > 0) {
+            minimoAcumulado = valDetectado;
+            break; // Pega o primeiro significativo
+          }
         }
       }
     }
@@ -1536,9 +1538,9 @@ export function startProcessingWorker(): Worker {
           const totalDescontosAplicados = descontosRows.reduce((acc, row) => acc + (row.aplicadoNoPgc || 0), 0);
           const valorTotalCredor = Number((brutoEPgcMinimo - totalDescontosAplicados).toFixed(2));
           
-          // Debug para auditoria do Clemar
-          if (credorSlug === 'clemar-de-souza') {
-            console.log(`[DEBUG CLEMAR] Bruto+Mínimo: ${brutoEPgcMinimo}, Desconto: ${totalDescontosAplicados}, Net: ${valorTotalCredor}`);
+          // Debug para auditoria da Ludmilla e Clemar
+          if (credorSlug === 'clemar-de-souza' || credorSlug === 'ludmilla-rosa-moreira-de-souza') {
+            console.log(`[DEBUG FINANCEIRO] Credor: ${credorSlug}, Bruto(AL): ${brutoEPgcMinimo - totalDescontosAplicados}, Mínimo(AO): ${minimoRows.reduce((a,r)=>a+r.minimo,0)}, Net Dashboard: ${valorTotalCredor}`);
           }
 
           const periodoFromBase =
