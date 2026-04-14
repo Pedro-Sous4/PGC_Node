@@ -31,6 +31,8 @@ type MinimoInfo = {
   valor: string;
   empresa: string;
   cnpj: string;
+  descricao?: string;
+  detalhes?: Array<{ valor: string; empresa: string; cnpj: string; descricao?: string }>;
 };
 
 type DiscountHistoryEntry = {
@@ -563,7 +565,16 @@ export class EmailsService {
   ): MinimoInfo {
     const normalizedCredor = normalizeCredorKey(credorNome);
     const normalizedCredorGolden = normalizeGoldenCredorName(credorNome);
+    const results: Array<{ valor: string; empresa: string; cnpj: string; descricao?: string }> = [];
+
     const rowsObj = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
+    const rowsArray = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
+      header: 1,
+      raw: false,
+      defval: '',
+    });
+
+    // Prioridade: colunas nomeadas
     for (const row of rowsObj) {
       const credor = textOf(row.CREDOR ?? row['CREDOR (AG)'] ?? row.credor);
       const credorNorm = normalizeCredorKey(credor);
@@ -573,23 +584,31 @@ export class EmailsService {
       const valor = textOf(row['MINIMO/FIXO'] ?? row.MINIMO ?? row.minimo);
       const empresa = textOf(row['EMPRESA EMISSAO'] ?? row.EMPRESA ?? row.empresa);
       const cnpjRaw = textOf(row.CNPJ ?? row.cnpj);
+      const descricao = textOf(row.DESCRICAO ?? row.descricao);
       const cnpj = cnpjRaw || empresaMap.get(empresa.toUpperCase()) || '-';
 
       const valorNum = parseNumberLikeWorker(valor);
+      if (valorNum > 0 || (valor && valor !== '-')) {
+        results.push({
+          valor: valorNum > 0 ? formatCurrencyBr(valorNum) : (valor || '-'),
+          empresa: empresa || '-',
+          cnpj,
+          descricao: descricao || 'Mínimo garantido',
+        });
+      }
+    }
+
+    if (results.length > 0) {
       return {
-        valor: valorNum > 0 ? formatCurrencyBr(valorNum) : (valor || '-'),
-        empresa: empresa || '-',
-        cnpj,
+        valor: results[0].valor,
+        empresa: results[0].empresa,
+        cnpj: results[0].cnpj,
+        descricao: results[0].descricao,
+        detalhes: results,
       };
     }
 
-    const rowsArray = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
-      header: 1,
-      raw: false,
-      defval: '',
-    });
-
-    // Fallback de layout tabular clássico.
+    // Fallback de layout tabular clássico (indices fixos)
     for (let i = 1; i < rowsArray.length; i += 1) {
       const row = rowsArray[i];
       const credor = textOf(row[32]);
@@ -602,14 +621,25 @@ export class EmailsService {
       const cnpj = empresaMap.get(empresa.toUpperCase()) || '-';
 
       const valorNum = parseNumberLikeWorker(valor);
+      if (valorNum > 0) {
+        results.push({
+          valor: formatCurrencyBr(valorNum),
+          empresa: empresa || '-',
+          cnpj,
+        });
+      }
+    }
+
+    if (results.length > 0) {
       return {
-        valor: valorNum > 0 ? formatCurrencyBr(valorNum) : (valor || '-'),
-        empresa: empresa || '-',
-        cnpj,
+        valor: results[0].valor,
+        empresa: results[0].empresa,
+        cnpj: results[0].cnpj,
+        detalhes: results,
       };
     }
 
-    // Fallback Golden pivô — regra AA PGC: credor 31, fallback 34; mínimo 39, fallback 40.
+    // Fallback Golden pivô
     const GOLDEN_START_ROW = 7;
     for (let i = GOLDEN_START_ROW; i < rowsArray.length; i += 1) {
       const row = rowsArray[i] ?? [];
@@ -627,10 +657,19 @@ export class EmailsService {
       const cnpjRaw = textOf(row[41]);
       const cnpj = cnpjRaw || empresaMap.get(empresa.toUpperCase()) || '-';
 
-      return {
+      results.push({
         valor: formatCurrencyBr(minimo),
         empresa: empresa || '-',
         cnpj,
+      });
+    }
+
+    if (results.length > 0) {
+      return {
+        valor: results[0].valor,
+        empresa: results[0].empresa,
+        cnpj: results[0].cnpj,
+        detalhes: results,
       };
     }
 
@@ -1031,15 +1070,23 @@ export class EmailsService {
         const includeDescontos = !isSports && descontosLines.length > 0;
 
         const infoMinimo = includeMinimo
-          ? applyTemplate(dto?.custom_texto_minimo || template.texto_minimo, {
-              'minimo.valor': minimo.valor,
-              'minimo.empresa': minimo.empresa,
-              'minimo.cnpj': minimo.cnpj,
-              valor_formatado: minimo.valor,
-              empresa: minimo.empresa,
-              cnpj: minimo.cnpj,
-              info_minimo: minimo.valor,
-            })
+          ? (minimo.detalhes || []).map(m => {
+              const baseText = dto?.custom_texto_minimo || template.texto_minimo;
+              // Substitui "Mínimo garantido" (literal do template) pela descrição real se houver
+              const adjustedTemplate = m.descricao 
+                ? baseText.replace(/M[íi]nimo\s*garantido/i, m.descricao)
+                : baseText;
+
+              return applyTemplate(adjustedTemplate, {
+                'minimo.valor': m.valor,
+                'minimo.empresa': m.empresa,
+                'minimo.cnpj': m.cnpj,
+                valor_formatado: m.valor,
+                empresa: m.empresa,
+                cnpj: m.cnpj,
+                info_minimo: m.valor,
+              });
+            }).join('\n')
           : '';
 
         const infoDescontos = includeDescontos

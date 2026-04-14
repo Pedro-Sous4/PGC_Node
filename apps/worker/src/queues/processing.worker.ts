@@ -544,7 +544,7 @@ async function listExcelFiles(dirPath: string): Promise<string[]> {
 }
 
 const DEFAULT_EMPRESA_CNPJ: Array<{ empresa: string; cnpj: string }> = [
-  { empresa: 'RESERVA DOS VINHEDOS INCORPORADORA SPE LTDA', cnpj: '34.028.040/0003-25' },
+  { empresa: 'RISERVA DOS VINHEDOS INCORPORADORA SPE LTDA', cnpj: '34.028.040/0003-25' },
   { empresa: 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '40.024.035/0001-85' },
   { empresa: 'LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS', cnpj: '48.896.217/0024-44' },
   { empresa: 'GVP PARTICIPACOES E INVESTIMENTOS LTDA', cnpj: '17.991.041/0001-90' },
@@ -818,7 +818,7 @@ function derivePgcMasterRecords(
   };
 
   const colCredor = findLastColumnIndex([/\bcredor\b/]);
-  const colMinimo = findLastColumnIndex([/minimo\/fixo/, /valor\s*fixo/]);
+  const colMinimo = findLastColumnIndex([/m[íi]nimo\/fixo/, /valor\s*fixo/, /m[íi]nimo\s*garantido/, /m[íi]nimo\s*reten[çc][ãa]o/]);
   const colBruto = findLastColumnIndex([/valor\s*bruto/, /total\s*geral/]);
   const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/, /emissor/]);
   const colCnpj = findLastColumnIndex([/\bcnpj\b/]);
@@ -845,8 +845,37 @@ function derivePgcMasterRecords(
     if (!credor) continue;
     if (normalizeText(credor).includes('total geral')) continue;
 
+    // Detecção de colunas que podem conter texto de "MÍNIMO"
+    const colDescricoes: number[] = [];
+    for (let col = 0; col < maxCols; col += 1) {
+      if (col === colCredor) continue;
+      const h = headerAt(col);
+      if (/descri[çc][ãa]o|obs|item|tipo/.test(h)) {
+        colDescricoes.push(col);
+      }
+    }
+
+    // Detecção de colunas que podem conter texto de "MÍNIMO"
+    let minimoAcumulado = colMinimo >= 0 ? parseNumber(row[colMinimo]) : 0;
+    let descricaoMinimo = 'Mínimo garantido';
+    
+    // Procura por colunas que tenham textos específicos no conteúdo
+    for (let col = 0; col < maxCols; col += 1) {
+      const cellValue = toDisplayText(row[col]);
+      const match = cellValue.match(/m[íi]nimo\s*garantido|m[íi]nimo\s*reten[çc][ãa]o|m[íi]nimo/i);
+      if (match) {
+        descricaoMinimo = match[0];
+        const valAtual = parseNumber(row[col]);
+        const valProximo = parseNumber(row[col + 1]);
+        const valDetectado = Math.max(valAtual, valProximo);
+        if (valDetectado > 0) {
+          minimoAcumulado = valDetectado;
+          break; // Pega o primeiro significativo
+        }
+      }
+    }
+
     const valorBruto = colBruto >= 0 ? parseNumber(row[colBruto]) : 0;
-    const minimo = colMinimo >= 0 ? parseNumber(row[colMinimo]) : 0;
     const empresaEmissaoRaw = colEmpresaEmissao >= 0 ? toDisplayText(row[colEmpresaEmissao]) : '';
     const cnpjFromRow = colCnpj >= 0 ? normalizeDocument(row[colCnpj]) : '';
     const credorSlug = toSlug(credor);
@@ -859,10 +888,11 @@ function derivePgcMasterRecords(
       credor,
       empresa: identity.fullName || empresaEmissaoRaw,
       cnpj: cnpjFromRow || cnpjByCredor || identity.cnpj || '',
-      minimo,
+      minimo: minimoAcumulado,
       desconto: 0,
       valorBruto,
-      total: Number((valorBruto + minimo).toFixed(2)),
+      total: Number((valorBruto + minimoAcumulado).toFixed(2)),
+      descricao: descricaoMinimo,
     });
 
     // Registros Auxiliares (Descontos por Empresa)
@@ -1434,6 +1464,7 @@ export function startProcessingWorker(): Worker {
           CNPJ: r.cnpj,
           DESCONTO: r.desconto ?? 0,
           TOTAL: r.total ?? r.minimo,
+          DESCRICAO: r.descricao || 'Mínimo garantido',
         }));
         const minimoWs = XLSX.utils.json_to_sheet(minimoData);
         XLSX.utils.book_append_sheet(minimoWb, minimoWs, 'MINIMO');
@@ -1500,7 +1531,15 @@ export function startProcessingWorker(): Worker {
             })),
           );
 
-          const valorTotalCredor = minimoRows.reduce((acc, row) => acc + row.total, 0);
+          // Cálculo do Valor Líquido para o Dashboard (Bruto + Mínimo - Descontos Efetivamente Aplicados)
+          const brutoEPgcMinimo = minimoRows.reduce((acc, row) => acc + (row.total || 0), 0);
+          const totalDescontosAplicados = descontosRows.reduce((acc, row) => acc + (row.aplicadoNoPgc || 0), 0);
+          const valorTotalCredor = Number((brutoEPgcMinimo - totalDescontosAplicados).toFixed(2));
+          
+          // Debug para auditoria do Clemar
+          if (credorSlug === 'clemar-de-souza') {
+            console.log(`[DEBUG CLEMAR] Bruto+Mínimo: ${brutoEPgcMinimo}, Desconto: ${totalDescontosAplicados}, Net: ${valorTotalCredor}`);
+          }
 
           const periodoFromBase =
             basePeriodoColumn && baseRows.length > 0

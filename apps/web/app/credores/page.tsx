@@ -6,8 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   batchCredores,
   createCredor,
-  exportCredoresCsvUrl,
-  exportCredoresXlsxUrl,
+  exportCredoresBlob,
   listCredores,
   listGrupos,
   updateCredor,
@@ -147,6 +146,22 @@ export default function CredoresPage() {
     await credoresQuery.refetch();
   }
 
+  async function handleExport(type: 'csv' | 'xlsx') {
+    try {
+      const blob = await exportCredoresBlob(type, { nome, grupoId, enviado, numero_pgc: numeroPgc });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `credores.${type}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err: any) {
+      alert(`Falha ao exportar: ${err.message}`);
+    }
+  }
+
   return (
     <DashboardShell
       activeNav="credores"
@@ -188,8 +203,8 @@ export default function CredoresPage() {
             </select>
           </label>
           <div className="actions-row" style={{ alignItems: 'end' }}>
-            <a className="btn-link secondary" href={exportCredoresCsvUrl()} target="_blank" rel="noreferrer">Export CSV</a>
-            <a className="btn-link secondary" href={exportCredoresXlsxUrl()} target="_blank" rel="noreferrer">Export XLSX</a>
+            <ActionButton type="button" variant="secondary" onClick={() => handleExport('csv')} label="Export CSV" />
+            <ActionButton type="button" variant="secondary" onClick={() => handleExport('xlsx')} label="Export XLSX" />
           </div>
         </form>
       </SectionCard>

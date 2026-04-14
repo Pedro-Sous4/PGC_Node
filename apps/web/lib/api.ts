@@ -384,6 +384,23 @@ export function exportCredoresXlsxUrl() {
   return `${API}/credores/export/xlsx`;
 }
 
+export async function exportCredoresBlob(type: 'csv' | 'xlsx', params: {
+  nome?: string;
+  grupoId?: string;
+  enviado?: string;
+  numero_pgc?: string;
+}): Promise<Blob> {
+  const query = new URLSearchParams();
+  if (params.nome) query.set('nome', params.nome);
+  if (params.grupoId) query.set('grupoId', params.grupoId);
+  if (params.enviado === 'true' || params.enviado === 'false') query.set('enviado', params.enviado);
+  if (params.numero_pgc) query.set('numero_pgc', params.numero_pgc);
+
+  const res = await fetchWithAuth(`${API}/credores/export/${type}?${query.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Falha ao exportar ${type.toUpperCase()}`);
+  return res.blob();
+}
+
 export async function uploadEmails(file: File, allowProtectedUpdate = false) {
   const form = new FormData();
   form.append('file', file);
