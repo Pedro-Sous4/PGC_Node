@@ -103,21 +103,26 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
 
   const historicoRows = useMemo(() => {
     if (!credor) return [] as Array<{ id: string; numeroPgc: string; periodo: string; evento: string }>;
-    return (credor.historicos ?? []).map((h: any) => ({
-      id: String(h.id),
-      numeroPgc: String(h.numero_pgc ?? '-'),
-      periodo: (() => {
-        const byRule = resolvePeriodoByGroupRule(credor.grupo?.nome, h.numero_pgc);
-        return byRule !== '-' ? byRule : String(h.periodo ?? '-');
-      })(),
-      evento: String(h.evento ?? '-'),
-    }))
-      .sort(
-        (
-          a: { id: string; numeroPgc: string; periodo: string; evento: string },
-          b: { id: string; numeroPgc: string; periodo: string; evento: string },
-        ) => parsePeriodoToSortKey(b.periodo) - parsePeriodoToSortKey(a.periodo),
-      );
+    
+    // Deduplicação: Agrupa por número de PGC e mantém apenas um registro por PGC
+    const uniqueMap = new Map<string, any>();
+    
+    (credor.historicos ?? []).forEach((h: any) => {
+      const numeroPgc = String(h.numero_pgc ?? '-');
+      const periodoByRule = resolvePeriodoByGroupRule(credor.grupo?.nome, h.numero_pgc);
+      const periodo = periodoByRule !== '-' ? periodoByRule : String(h.periodo ?? '-');
+      
+      // Sempre sobrescreve com o último encontrado (que no array original costuma ser o mais recente dependendo da query)
+      uniqueMap.set(numeroPgc, {
+        id: String(h.id),
+        numeroPgc,
+        periodo,
+        evento: String(h.evento ?? '-'),
+      });
+    });
+
+    return Array.from(uniqueMap.values())
+      .sort((a, b) => parsePeriodoToSortKey(b.periodo) - parsePeriodoToSortKey(a.periodo));
   }, [credor]);
 
   const periodOptions = useMemo<string[]>(() => {
@@ -173,16 +178,28 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
   const chartData = useMemo(() => {
     if (!credor) return [] as Array<{ x: string; y: number }>;
 
-    const rows = (credor.rendimentos ?? []).map((r: any) => {
+    // Deduplicação de rendimentos para o gráfico
+    const uniqueMap = new Map<string, { x: string; y: number }>();
+    
+    (credor.rendimentos ?? []).forEach((r: any) => {
+      const numeroPgc = String(r.numero_pgc ?? '-');
       const periodoRegra = resolvePeriodoByGroupRule(credor.grupo?.nome, r.numero_pgc);
       const periodoFinal = periodoRegra !== '-' ? periodoRegra : String(r.referencia ?? '-');
-      return {
-        x: compactLabel(periodoFinal, r.numero_pgc),
+      const label = compactLabel(periodoFinal, numeroPgc);
+      
+      uniqueMap.set(label, {
+        x: label,
         y: Number(r.valor ?? 0),
-      };
+      });
     });
 
-    return rows.reverse();
+    const rows = Array.from(uniqueMap.values());
+    // Ordena por período (menor para maior para o gráfico)
+    return rows.sort((a, b) => {
+      const pA = a.x.split('|')[1]?.trim() || '';
+      const pB = b.x.split('|')[1]?.trim() || '';
+      return parsePeriodoToSortKey(pA) - parsePeriodoToSortKey(pB);
+    });
   }, [credor]);
 
   const averageValue = useMemo(() => {

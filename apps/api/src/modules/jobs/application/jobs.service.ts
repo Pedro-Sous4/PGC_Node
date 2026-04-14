@@ -411,11 +411,14 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           }
 
           if (numeroPgc && periodo && typeof valorTotal === 'number' && Number.isFinite(valorTotal) && valorTotal >= 0) {
+            const normalizedPgc = numeroPgc.trim().toLowerCase();
+            const normalizedPeriodo = periodo.trim().toLowerCase();
+
             const existing = await this.prisma.rendimento.findFirst({
               where: {
                 credorId: credor.id,
-                numero_pgc: numeroPgc,
-                referencia: periodo,
+                numero_pgc: { equals: normalizedPgc, mode: 'insensitive' },
+                referencia: { equals: normalizedPeriodo, mode: 'insensitive' },
               },
               select: { id: true },
               orderBy: { created_at: 'desc' },
@@ -424,32 +427,69 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
             if (existing) {
               await this.prisma.rendimento.update({
                 where: { id: existing.id },
-                data: { valor: new Prisma.Decimal(valorTotal) },
+                data: { 
+                  valor: new Prisma.Decimal(valorTotal),
+                  updated_at: new Date()
+                },
               });
+
+              const hist = await this.prisma.historicoPGC.findFirst({
+                where: {
+                  credorId: credor.id,
+                  numero_pgc: normalizedPgc,
+                },
+                select: { id: true }
+              });
+
+              if (hist) {
+                await this.prisma.historicoPGC.update({
+                  where: { id: hist.id },
+                  data: { 
+                    valorTotal: new Prisma.Decimal(valorTotal),
+                    updated_at: new Date(),
+                    payload: {
+                      valorTotal,
+                      updatedAt: new Date().toISOString()
+                    }
+                  }
+                });
+              } else {
+                await this.prisma.historicoPGC.create({
+                  data: {
+                    requestId,
+                    credorId: credor.id,
+                    numero_pgc: normalizedPgc,
+                    periodo: normalizedPeriodo,
+                    valorTotal: new Prisma.Decimal(valorTotal),
+                    evento: 'PROCESSAMENTO_JOB',
+                    payload: { valorTotal }
+                  }
+                });
+              }
             } else {
               await this.prisma.rendimento.create({
                 data: {
                   credorId: credor.id,
-                  numero_pgc: numeroPgc,
-                  referencia: periodo,
+                  numero_pgc: normalizedPgc,
+                  referencia: normalizedPeriodo,
+                  periodo: normalizedPeriodo,
                   valor: new Prisma.Decimal(valorTotal),
+                  requestId,
+                },
+              });
+
+              await this.prisma.historicoPGC.create({
+                data: {
+                  requestId,
+                  credorId: credor.id,
+                  numero_pgc: normalizedPgc,
+                  periodo: normalizedPeriodo,
+                  valorTotal: new Prisma.Decimal(valorTotal),
+                  evento: 'PROCESSAMENTO_JOB',
+                  payload: { valorTotal }
                 },
               });
             }
-
-            await this.prisma.historicoPGC.create({
-              data: {
-                requestId,
-                credorId: credor.id,
-                numero_pgc: numeroPgc,
-                periodo,
-                valorTotal: new Prisma.Decimal(valorTotal),
-                evento: 'PROCESSAMENTO_JOB',
-                payload: {
-                  origem: 'jobs.internal-progress',
-                },
-              },
-            });
           }
         }
 
