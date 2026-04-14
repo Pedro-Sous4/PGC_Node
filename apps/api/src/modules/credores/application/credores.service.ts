@@ -273,8 +273,16 @@ export class CredoresService {
       const valorTotal = item.rendimentos.reduce((acc, r) => acc + Number(r.valor), 0);
       const latestRendimento = item.rendimentos[0];
 
-      // Calcula o Valor do PGC específico (ou do mais recente)
-      const targetPgc = query.numero_pgc || latestRendimento?.numero_pgc;
+      // Identifica o maior número de PGC numérico entre todos os rendimentos do credor
+      const allPgcs = item.rendimentos
+        .map(r => ({ pgc: r.numero_pgc, num: Number(String(r.numero_pgc ?? '').replace(/\D/g, '')) }))
+        .filter(p => !isNaN(p.num))
+        .sort((a, b) => b.num - a.num);
+
+      const latestNumericPgc = allPgcs[0]?.pgc;
+
+      // Calcula o Valor do PGC específico (ou do mais recente numérico)
+      const targetPgc = query.numero_pgc || latestNumericPgc || latestRendimento?.numero_pgc;
       const valorPgc = item.rendimentos
         .filter((r) => r.numero_pgc === targetPgc)
         .reduce((acc, r) => acc + Number(r.valor), 0);
