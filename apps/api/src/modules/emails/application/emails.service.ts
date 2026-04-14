@@ -1088,22 +1088,15 @@ export class EmailsService {
                         `--- [END AUDIT] ---\n`;
         fsBody.appendFileSync('c:\\PGC_Node\\scripts\\test-validation.log', bodyLog);
 
-        // TRAVA DE SEGURANÇA: Apenas enviar para pedroforoni@gmail.com
-        const ALLOWED_EMAIL = 'pedroforoni@gmail.com';
-        if (credor.email !== ALLOWED_EMAIL) {
-          console.warn(`[SAFETY LOCK] Envio bloqueado para ${credor.email}. Apenas ${ALLOWED_EMAIL} é permitido.`);
-          
-          // Simulamos o log de sucesso para o sistema continuar, mas não chamamos o transporter.sendMail
-        } else {
-          await transporter.sendMail({
-            from: senderLabel,
-            to: credor.email,
-            replyTo: replyTo || undefined,
-            subject,
-            text: body,
-            attachments,
-          });
-        }
+        // ENVIO REAL: Utiliza o transportADOR SMTP configurado
+        await transporter.sendMail({
+          from: senderLabel,
+          to: credor.email,
+          replyTo: replyTo || undefined,
+          subject,
+          text: body,
+          attachments,
+        });
 
         await this.prisma.emailLog.update({
           where: { id: log.id },
