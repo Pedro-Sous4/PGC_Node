@@ -5,6 +5,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 export interface AuthJwtPayload {
   sub: string;
   email: string;
+  role: string;
 }
 
 @Injectable()

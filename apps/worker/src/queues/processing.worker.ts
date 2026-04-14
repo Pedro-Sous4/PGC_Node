@@ -92,6 +92,7 @@ type MinimoRecord = {
   cnpj: string;
   minimo: number;
   desconto: number;
+  valorBruto: number;
   total: number;
 };
 
@@ -107,7 +108,13 @@ type DiscountLedgerEntry = {
 type SheetValue = string | number;
 type SheetRecord = Record<string, SheetValue>;
 
+type CompanyIdentity = {
+  fullName: string;
+  cnpj: string;
+};
+
 type DiscountHistoryState = Map<string, number>;
+
 
 type DiscountHistoryLogEntry = {
   createdAt: string;
@@ -168,29 +175,6 @@ function normalizeEmpresaKey(value: unknown): string {
   return normalizeText(text);
 }
 
-function resolveCnpjForEmpresa(empresa: string, empresaCnpjMap: Map<string, string>): string {
-  const rawKey = empresa.toUpperCase();
-  const exact = empresaCnpjMap.get(rawKey);
-  if (exact) return exact;
-
-  const canonical = normalizeEmpresaKey(empresa);
-  if (!canonical) return '';
-
-  const aliases = new Map<string, string>([
-    ['riserva dos vinhedos incorporadora spe ltda', 'reserva dos vinhedos incorporadora spe ltda'],
-  ]);
-  const canonicalResolved = aliases.get(canonical) ?? canonical;
-
-  for (const [key, cnpj] of empresaCnpjMap.entries()) {
-    const keyCanonical = normalizeEmpresaKey(key);
-    if (!keyCanonical) continue;
-    const keyResolved = aliases.get(keyCanonical) ?? keyCanonical;
-    if (keyResolved === canonicalResolved) return cnpj;
-    if (keyResolved.includes(canonicalResolved) || canonicalResolved.includes(keyResolved)) return cnpj;
-  }
-
-  return '';
-}
 
 function parseNumber(value: unknown): number {
   const raw = String(value ?? '').trim();
@@ -332,17 +316,17 @@ function buildDiscountHistoryKey(credorSlug: string, empresa: string): string {
   return `${credorSlug}::${normalizeEmpresaKey(empresa)}`;
 }
 
-function resolveDiscountHistoryFiles(): { saldoFilePath: string; logFilePath: string } {
+function resolveDiscountHistoryFiles(flow: string) {
   const workspaceRoot = resolveWorkspaceRoot();
-  const baseDir = path.join(workspaceRoot, 'PGC', 'LGM');
+  const baseDir = path.join(workspaceRoot, 'PGC', flow.toUpperCase());
   return {
     saldoFilePath: path.join(baseDir, 'descontos-saldo.json'),
     logFilePath: path.join(baseDir, 'descontos-historico.json'),
   };
 }
 
-async function loadDiscountHistoryState(): Promise<DiscountHistoryState> {
-  const { saldoFilePath } = resolveDiscountHistoryFiles();
+async function loadDiscountHistoryState(flow: string): Promise<DiscountHistoryState> {
+  const { saldoFilePath } = resolveDiscountHistoryFiles(flow);
   const map: DiscountHistoryState = new Map();
 
   const exists = await fs
@@ -373,8 +357,8 @@ async function loadDiscountHistoryState(): Promise<DiscountHistoryState> {
   return map;
 }
 
-async function persistDiscountHistoryState(state: DiscountHistoryState): Promise<void> {
-  const { saldoFilePath } = resolveDiscountHistoryFiles();
+async function persistDiscountHistoryState(flow: string, state: DiscountHistoryState): Promise<void> {
+  const { saldoFilePath } = resolveDiscountHistoryFiles(flow);
   await fs.mkdir(path.dirname(saldoFilePath), { recursive: true });
 
   const serialized: Record<string, number> = {};
@@ -387,10 +371,11 @@ async function persistDiscountHistoryState(state: DiscountHistoryState): Promise
   await fs.writeFile(saldoFilePath, JSON.stringify(serialized, null, 2), 'utf8');
 }
 
-async function appendDiscountHistoryLog(entries: DiscountHistoryLogEntry[]): Promise<void> {
-  if (entries.length === 0) return;
-
-  const { logFilePath } = resolveDiscountHistoryFiles();
+async function appendDiscountHistoryLog(
+  flow: string,
+  entries: DiscountHistoryLogEntry[],
+): Promise<void> {
+  const { logFilePath } = resolveDiscountHistoryFiles(flow);
   await fs.mkdir(path.dirname(logFilePath), { recursive: true });
 
   const existing = await fs
@@ -411,6 +396,7 @@ function applyDiscountsForCredor(
   historyState: DiscountHistoryState,
   baseRows: RowRecord[],
   baseHeaders: string[],
+  companyMap: Map<string, CompanyIdentity>,
 ): { adjustedRows: MinimoRecord[]; ledger: DiscountLedgerEntry[] } {
   const hasMinimo = minimoRows.length > 0;
   const hasBase = baseRows.length > 0;
@@ -423,32 +409,33 @@ function applyDiscountsForCredor(
   const adjustedRows: MinimoRecord[] = minimoRows.map((row) => ({
     ...row,
     desconto: 0,
-    total: row.minimo,
+    total: Number(((row.valorBruto || 0) + (row.minimo || 0)).toFixed(2)),
   }));
 
-  const companies = new Set<string>();
-  const displayCompanyByKey = new Map<string, string>();
-  const currentDiscountByCompany = new Map<string, number>();
-  const availableByCompany = new Map<string, number>();
+  const resolvedCompanies = new Set<string>(); // Set of fullNames
+  const identityByResolvedName = new Map<string, CompanyIdentity>();
+  const availableByResolvedName = new Map<string, number>();
+  const currentDiscountByResolvedName = new Map<string, number>();
 
   for (const original of minimoRows) {
-    const companyDisplay = (original.empresa || '').trim();
-    const company = normalizeEmpresaKey(companyDisplay);
-    if (!company) continue;
+    const identity = resolveCompanyIdentity(original.empresa, companyMap);
+    const resolvedName = identity.fullName || original.empresa;
+    if (!resolvedName) continue;
 
-    companies.add(company);
-    if (!displayCompanyByKey.has(company)) {
-      displayCompanyByKey.set(company, companyDisplay || original.empresa);
-    }
-    availableByCompany.set(company, (availableByCompany.get(company) ?? 0) + Math.max(0, original.minimo));
+    resolvedCompanies.add(resolvedName);
+    identityByResolvedName.set(resolvedName, identity);
+    
+    // Agora o saldo disponível inclui tanto o Mínimo quanto o Valor Bruto da empresa
+    const saldoLinha = Number(((original.minimo || 0) + (original.valorBruto || 0)).toFixed(2));
+    availableByResolvedName.set(resolvedName, (availableByResolvedName.get(resolvedName) ?? 0) + saldoLinha);
 
     const currentDiscount = Math.abs(Number(original.desconto ?? 0));
     if (currentDiscount > 0) {
-      currentDiscountByCompany.set(company, (currentDiscountByCompany.get(company) ?? 0) + currentDiscount);
+      currentDiscountByResolvedName.set(resolvedName, (currentDiscountByResolvedName.get(resolvedName) ?? 0) + currentDiscount);
     }
   }
 
-  const totalAvailableFromMinimo = Array.from(availableByCompany.values()).reduce((acc, value) => acc + value, 0);
+  const totalAvailableFromMinimo = Array.from(availableByResolvedName.values()).reduce((acc, value) => acc + value, 0);
   if (totalAvailableFromMinimo <= 0) {
     const empresaColumns = baseHeaders.filter((header) => /empresa/.test(normalizeText(header)));
     const valorColumns = baseHeaders.filter((header) => /valor original|^valor$|valor|total geral/.test(normalizeText(header)));
@@ -458,49 +445,38 @@ function applyDiscountsForCredor(
         const empresaRaw = empresaColumns.map((header) => toDisplayText(row[header])).find((value) => value !== '');
         if (!empresaRaw) continue;
 
-        const company = normalizeEmpresaKey(empresaRaw);
-        if (!company) continue;
+        const identity = resolveCompanyIdentity(empresaRaw, companyMap);
+        const resolvedName = identity.fullName || empresaRaw;
+        if (!resolvedName) continue;
 
         const valorRaw = valorColumns.map((header) => row[header]).find((value) => parseNumber(value) > 0);
         const valor = Math.max(0, parseNumber(valorRaw));
         if (valor <= 0) continue;
 
-        companies.add(company);
-        if (!displayCompanyByKey.has(company)) {
-          displayCompanyByKey.set(company, empresaRaw);
-        }
-        availableByCompany.set(company, Number(((availableByCompany.get(company) ?? 0) + valor).toFixed(2)));
+        resolvedCompanies.add(resolvedName);
+        identityByResolvedName.set(resolvedName, identity);
+        availableByResolvedName.set(resolvedName, Number(((availableByResolvedName.get(resolvedName) ?? 0) + valor).toFixed(2)));
       }
     }
   }
 
-  if (String(process.env.DEBUG_DISCOUNT_CALC ?? '').toLowerCase() === 'true') {
-    // eslint-disable-next-line no-console
-    console.info(
-      '[discount-debug-base]',
-      JSON.stringify({
-        credorSlug,
-        minimoRowsCount: minimoRows.length,
-        baseRowsCount: baseRows.length,
-        baseHeaders,
-        availableByCompany: Object.fromEntries(availableByCompany.entries()),
-        currentDiscountByCompany: Object.fromEntries(currentDiscountByCompany.entries()),
-      }),
-    );
-  }
-
   for (const key of historyState.keys()) {
     if (!key.startsWith(`${credorSlug}::`)) continue;
-    const company = normalizeEmpresaKey(key.slice(`${credorSlug}::`.length));
-    if (company) companies.add(company);
+    const empresaRaw = key.slice(`${credorSlug}::`.length);
+    const identity = resolveCompanyIdentity(empresaRaw, companyMap);
+    const resolvedName = identity.fullName || empresaRaw;
+    if (resolvedName) {
+      resolvedCompanies.add(resolvedName);
+      identityByResolvedName.set(resolvedName, identity);
+    }
   }
 
   const ledger: DiscountLedgerEntry[] = [];
 
-  for (const company of companies) {
-    const historyKey = buildDiscountHistoryKey(credorSlug, company);
+  for (const resolvedName of resolvedCompanies) {
+    const historyKey = `${credorSlug}::${resolvedName}`;
     const carryoverAnterior = historyState.get(historyKey) ?? 0;
-    const descontoAtual = currentDiscountByCompany.get(company) ?? 0;
+    const descontoAtual = currentDiscountByResolvedName.get(resolvedName) ?? 0;
     const demandaTotal = Number((descontoAtual + carryoverAnterior).toFixed(2));
 
     if (demandaTotal <= 0) {
@@ -508,29 +484,15 @@ function applyDiscountsForCredor(
       continue;
     }
 
-    const saldoDisponivel = Number((availableByCompany.get(company) ?? 0).toFixed(2));
+    const saldoDisponivel = Number((availableByResolvedName.get(resolvedName) ?? 0).toFixed(2));
     let aplicadoNoPgc = Number(Math.min(demandaTotal, saldoDisponivel).toFixed(2));
     const aplicadoPlanejado = aplicadoNoPgc;
     let restanteAplicar = aplicadoNoPgc;
 
-    if (String(process.env.DEBUG_DISCOUNT_CALC ?? '').toLowerCase() === 'true') {
-      // eslint-disable-next-line no-console
-      console.info(
-        '[discount-debug]',
-        JSON.stringify({
-          credorSlug,
-          company,
-          descontoAtual,
-          carryoverAnterior,
-          demandaTotal,
-          saldoDisponivel,
-          aplicadoNoPgc,
-        }),
-      );
-    }
-
     for (const row of adjustedRows) {
-      if (normalizeEmpresaKey(row.empresa) !== company || restanteAplicar <= 0) continue;
+      const rowIdentity = resolveCompanyIdentity(row.empresa, companyMap);
+      if ((rowIdentity.fullName || row.empresa) !== resolvedName || restanteAplicar <= 0) continue;
+      
       const descontoLinha = Number(Math.min(row.total, restanteAplicar).toFixed(2));
       if (descontoLinha <= 0) continue;
 
@@ -551,8 +513,9 @@ function applyDiscountsForCredor(
       historyState.delete(historyKey);
     }
 
+    const identity = identityByResolvedName.get(resolvedName);
     ledger.push({
-      empresa: displayCompanyByKey.get(company) ?? company,
+      empresa: identity?.fullName || resolvedName,
       descontoAtual,
       carryoverAnterior,
       aplicadoNoPgc,
@@ -595,74 +558,68 @@ const DEFAULT_EMPRESA_CNPJ: Array<{ empresa: string; cnpj: string }> = [
   { empresa: 'JPZ EMPREENDIMENTOS LTDA', cnpj: '48.896.217/0024-44' },
 ];
 
-async function loadEmpresaCnpjMap(baseDir: string): Promise<Map<string, string>> {
-  const map = new Map<string, string>(
-    DEFAULT_EMPRESA_CNPJ.map((item) => [item.empresa.toUpperCase(), item.cnpj]),
-  );
+async function loadEmpresaCnpjMap(baseDir: string): Promise<Map<string, CompanyIdentity>> {
+  const map = new Map<string, CompanyIdentity>();
   const workspaceRoot = resolveWorkspaceRoot();
 
-  const settingsCandidates = [
-    path.join(workspaceRoot, 'apps', 'api', '.runtime', 'system-settings.json'),
-    path.join(path.dirname(baseDir), '.runtime', 'system-settings.json'),
-  ];
+  // 1. Load Defaults (fallback interno)
+  for (const item of DEFAULT_EMPRESA_CNPJ) {
+    const key = item.empresa.toUpperCase();
+    map.set(key, { fullName: item.empresa, cnpj: item.cnpj });
+  }
 
-  for (const settingsPath of settingsCandidates) {
-    try {
-      const content = await fs.readFile(settingsPath, 'utf8');
-      const parsed = JSON.parse(content) as {
-        empresasCnpj?: Array<{ empresa?: string; cnpj?: string }>;
-      };
+  // 2. Load from System Settings (Fonte Primária)
+  const settingsPath = path.join(workspaceRoot, 'apps', 'api', '.runtime', 'system-settings.json');
+  try {
+    const content = await fs.readFile(settingsPath, 'utf8');
+    const parsed = JSON.parse(content) as {
+      empresasCnpj?: Array<{ empresa?: string; cnpj?: string; apelido?: string }>;
+    };
 
-      for (const item of parsed.empresasCnpj ?? []) {
-        const empresa = toDisplayText(item.empresa);
-        const cnpj = toDisplayText(item.cnpj);
-        if (!empresa || !cnpj) continue;
-        const key = empresa.toUpperCase();
-        if (!map.has(key)) {
-          map.set(key, cnpj);
-        }
+    for (const item of parsed.empresasCnpj ?? []) {
+      const empresa = toDisplayText(item.empresa);
+      const cnpj = toDisplayText(item.cnpj);
+      const apelido = toDisplayText(item.apelido);
+      if (!empresa || !cnpj) continue;
+
+      const identity: CompanyIdentity = { fullName: empresa, cnpj };
+      
+      // Mapeia pelo nome oficial
+      map.set(empresa.toUpperCase(), identity);
+      
+      // Mapeia pelo apelido, se existir e for válido
+      if (apelido && apelido.length >= 2) {
+        map.set(apelido.toUpperCase(), identity);
       }
-    } catch {
-      // Ignore malformed/missing settings and continue with other sources.
     }
-  }
-
-  const candidates = [
-    path.join(baseDir, 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
-    path.join(path.dirname(baseDir), 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
-    path.join(workspaceRoot, 'artifacts', 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
-    path.join(workspaceRoot, 'apps', 'api', 'artifacts', 'EMPRESAS_NOMECURTO_CNPJ.xlsx'),
-  ];
-
-  let filePath: string | null = null;
-  for (const candidate of candidates) {
-    const exists = await fs
-      .stat(candidate)
-      .then((st) => st.isFile())
-      .catch(() => false);
-    if (exists) {
-      filePath = candidate;
-      break;
-    }
-  }
-
-  if (!filePath) return map;
-
-  const wb = XLSX.readFile(filePath);
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' });
-
-  for (const row of rows) {
-    const nomeCurto = toDisplayText(row.nome_curto ?? row.NOME_CURTO ?? row.empresa ?? row.EMPRESA);
-    const cnpj = toDisplayText(row.cnpj ?? row.CNPJ);
-    if (!nomeCurto || !cnpj) continue;
-    const key = nomeCurto.toUpperCase();
-    if (!map.has(key)) {
-      map.set(key, cnpj);
-    }
+  } catch {
+    // Ignore error, mantém os defaults
   }
 
   return map;
+}
+
+function resolveCompanyIdentity(
+  input: string,
+  companyMap: Map<string, CompanyIdentity>,
+): CompanyIdentity {
+  const raw = toDisplayText(input);
+  if (!raw) return { fullName: '', cnpj: '' };
+
+  const key = raw.toUpperCase();
+  const found = companyMap.get(key);
+  if (found) return found;
+
+  // Fallback: search by canonical name
+  const canonical = normalizeEmpresaKey(raw);
+  for (const [mapKey, identity] of companyMap.entries()) {
+    if (normalizeEmpresaKey(mapKey) === canonical) {
+      return identity;
+    }
+  }
+
+  // Final fallback: return input as name with empty cnpj
+  return { fullName: raw, cnpj: '' };
 }
 
 async function resolveInputWorkbook(requestId: string, flow?: string): Promise<string> {
@@ -811,10 +768,10 @@ function buildCnpjFallbackMap(base: ParsedSheet): Map<string, string> {
   return map;
 }
 
-function deriveMinimoRecordsFromLegacyLayout(
+function derivePgcMasterRecords(
   worksheet: XLSX.WorkSheet,
   cnpjFallback: Map<string, string>,
-  empresaCnpjMap: Map<string, string>,
+  companyMap: Map<string, CompanyIdentity>,
 ): MinimoRecord[] {
   const rows = XLSX.utils.sheet_to_json(worksheet, {
     header: 1,
@@ -823,21 +780,23 @@ function deriveMinimoRecordsFromLegacyLayout(
   }) as unknown[][];
 
   const records: MinimoRecord[] = [];
-  if (rows.length < 8) return records;
+  if (rows.length < 5) return records;
 
   const headerRowAIndex = rows.findIndex((row, idx) => {
-    if (idx > 20) return false;
+    if (idx > 30) return false;
     const normalized = (row ?? []).map((cell) => normalizeText(cell)).filter(Boolean);
     return (
-      normalized.some((value) => value.includes('descontos')) &&
-      normalized.some((value) => value.includes('empresa desconto'))
+      normalized.some((value) => value.includes('credor')) &&
+      (normalized.some((value) => value.includes('minimo')) ||
+        normalized.some((value) => value.includes('bruto')) ||
+        normalized.some((value) => value.includes('total')))
     );
   });
 
-  if (headerRowAIndex < 0 || headerRowAIndex + 1 >= rows.length) return records;
+  if (headerRowAIndex < 0) return records;
 
-  const headerRowBIndex = headerRowAIndex + 1;
-  const dataStartIndex = headerRowBIndex + 1;
+  const headerRowBIndex = headerRowAIndex + 1 < rows.length ? headerRowAIndex : headerRowAIndex;
+  const dataStartIndex = Math.max(headerRowAIndex, headerRowBIndex) + 1;
 
   const headerRowA = rows[headerRowAIndex] ?? [];
   const headerRowB = rows[headerRowBIndex] ?? [];
@@ -845,15 +804,6 @@ function deriveMinimoRecordsFromLegacyLayout(
 
   const headerAt = (col: number): string =>
     normalizeText(`${toDisplayText(headerRowA[col])} ${toDisplayText(headerRowB[col])}`);
-
-  const findColumnIndex = (patterns: RegExp[]): number => {
-    for (let col = 0; col < maxCols; col += 1) {
-      const header = headerAt(col);
-      if (!header) continue;
-      if (patterns.some((pattern) => pattern.test(header))) return col;
-    }
-    return -1;
-  };
 
   const findLastColumnIndex = (patterns: RegExp[]): number => {
     let found = -1;
@@ -868,10 +818,12 @@ function deriveMinimoRecordsFromLegacyLayout(
   };
 
   const colCredor = findLastColumnIndex([/\bcredor\b/]);
-  const colMinimo = findLastColumnIndex([/minimo/, /fixo/]);
-  const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/]);
+  const colMinimo = findLastColumnIndex([/minimo\/fixo/, /valor\s*fixo/]);
+  const colBruto = findLastColumnIndex([/valor\s*bruto/, /total\s*geral/]);
+  const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/, /emissor/]);
   const colCnpj = findLastColumnIndex([/\bcnpj\b/]);
-
+  
+  // Detecção dinâmica de pares (Desconto + Empresa Desconto)
   const descontoPairs: Array<{ descontoCol: number; empresaCol: number }> = [];
   for (let col = 0; col < maxCols - 1; col += 1) {
     const currentHeader = headerAt(col);
@@ -881,49 +833,53 @@ function deriveMinimoRecordsFromLegacyLayout(
     const isEmpresaDescontoCol = /empresa\s*desconto/.test(nextHeader);
     if (isDescontoCol && isEmpresaDescontoCol) {
       descontoPairs.push({ descontoCol: col, empresaCol: col + 1 });
-      col += 1;
+      col += 1; // Pula a coluna da empresa que já consumimos
     }
   }
 
   if (colCredor < 0) return records;
 
-  // Dados começam na linha imediatamente após os dois cabeçalhos identificados.
   for (let rowIndex = dataStartIndex; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
     const credor = toCredorDisplayName(row[colCredor]);
     if (!credor) continue;
+    if (normalizeText(credor).includes('total geral')) continue;
 
+    const valorBruto = colBruto >= 0 ? parseNumber(row[colBruto]) : 0;
     const minimo = colMinimo >= 0 ? parseNumber(row[colMinimo]) : 0;
-    const empresaEmissao = colEmpresaEmissao >= 0 ? toDisplayText(row[colEmpresaEmissao]) : '';
+    const empresaEmissaoRaw = colEmpresaEmissao >= 0 ? toDisplayText(row[colEmpresaEmissao]) : '';
     const cnpjFromRow = colCnpj >= 0 ? normalizeDocument(row[colCnpj]) : '';
     const credorSlug = toSlug(credor);
     const cnpjByCredor = cnpjFallback.get(credorSlug) ?? '';
 
-    if (minimo > 0 || empresaEmissao) {
-      const cnpjByEmpresa = empresaEmissao ? resolveCnpjForEmpresa(empresaEmissao, empresaCnpjMap) : '';
-      records.push({
-        credor,
-        empresa: empresaEmissao,
-        cnpj: cnpjFromRow || cnpjByCredor || cnpjByEmpresa || '',
-        minimo,
-        desconto: 0,
-        total: minimo,
-      });
-    }
+    const identity = resolveCompanyIdentity(empresaEmissaoRaw, companyMap);
+    
+    // Registro Mestre (Bruto e Mínimo)
+    records.push({
+      credor,
+      empresa: identity.fullName || empresaEmissaoRaw,
+      cnpj: cnpjFromRow || cnpjByCredor || identity.cnpj || '',
+      minimo,
+      desconto: 0,
+      valorBruto,
+      total: Number((valorBruto + minimo).toFixed(2)),
+    });
 
+    // Registros Auxiliares (Descontos por Empresa)
     for (const pair of descontoPairs) {
       const descontoValue = Math.abs(parseNumber(row[pair.descontoCol]));
-      const empresaDesconto = toDisplayText(row[pair.empresaCol]);
-      if (!empresaDesconto || descontoValue <= 0) continue;
+      const empresaDescontoRaw = toDisplayText(row[pair.empresaCol]);
+      if (!empresaDescontoRaw || descontoValue <= 0) continue;
 
-      const cnpjByEmpresaDesconto = resolveCnpjForEmpresa(empresaDesconto, empresaCnpjMap);
+      const discountIdentity = resolveCompanyIdentity(empresaDescontoRaw, companyMap);
       records.push({
         credor,
-        empresa: empresaDesconto,
-        cnpj: cnpjByCredor || cnpjByEmpresaDesconto || '',
+        empresa: discountIdentity.fullName || empresaDescontoRaw,
+        cnpj: cnpjByCredor || discountIdentity.cnpj || '',
         minimo: 0,
         desconto: descontoValue,
-        total: descontoValue,
+        valorBruto: 0,
+        total: 0, // Desconto puro
       });
     }
   }
@@ -931,83 +887,13 @@ function deriveMinimoRecordsFromLegacyLayout(
   return records;
 }
 
-function deriveMinimoRecordsFromPivotLayout(
-  worksheet: XLSX.WorkSheet,
-  cnpjFallback: Map<string, string>,
-  empresaCnpjMap: Map<string, string>,
-): MinimoRecord[] {
-  const rows = XLSX.utils.sheet_to_json(worksheet, {
-    header: 1,
-    raw: false,
-    defval: '',
-  }) as unknown[][];
-
-  const records: MinimoRecord[] = [];
-  const headerIndex = rows.findIndex((row) => {
-    const normalized = (row ?? []).map((cell) => normalizeText(cell));
-    return normalized.includes('credor') && normalized.some((value) => value.includes('total geral'));
-  });
-
-  if (headerIndex < 0) return records;
-
-  const headerRow = rows[headerIndex] ?? [];
-  const totalIndex = headerRow.findIndex((cell) => normalizeText(cell).includes('total geral'));
-  if (totalIndex <= 1) return records;
-
-  const empresaColumns: Array<{ index: number; empresa: string }> = [];
-  for (let col = 1; col < totalIndex; col += 1) {
-    const empresa = toDisplayText(headerRow[col]);
-    if (!empresa) continue;
-    empresaColumns.push({ index: col, empresa });
-  }
-
-  for (let rowIndex = headerIndex + 1; rowIndex < rows.length; rowIndex += 1) {
-    const row = rows[rowIndex] ?? [];
-    const credorRaw = toDisplayText(row[0]);
-    if (!credorRaw) continue;
-    if (normalizeText(credorRaw).includes('total geral')) continue;
-
-    const credor = toCredorDisplayName(credorRaw);
-    if (!credor) continue;
-
-    const credorSlug = toSlug(credor);
-    const cnpjByCredor = cnpjFallback.get(credorSlug) ?? '';
-
-    for (const column of empresaColumns) {
-      const value = parseNumber(row[column.index]);
-      if (value === 0) continue;
-
-      const cnpjByEmpresa = resolveCnpjForEmpresa(column.empresa, empresaCnpjMap);
-      records.push({
-        credor,
-        empresa: column.empresa,
-        cnpj: cnpjByCredor || cnpjByEmpresa || '',
-        minimo: value,
-        desconto: 0,
-        total: value,
-      });
-    }
-  }
-
-  return records;
-}
 
 function deriveMinimoRecords(
   worksheet: XLSX.WorkSheet,
   cnpjFallback: Map<string, string>,
-  empresaCnpjMap: Map<string, string>,
+  companyMap: Map<string, CompanyIdentity>,
 ): MinimoRecord[] {
-  const legacy = deriveMinimoRecordsFromLegacyLayout(worksheet, cnpjFallback, empresaCnpjMap);
-  const pivot = deriveMinimoRecordsFromPivotLayout(worksheet, cnpjFallback, empresaCnpjMap);
-
-  const legacyHasExplicitDiscount = legacy.some((row) => Number(row.desconto ?? 0) > 0);
-  if (legacyHasExplicitDiscount) return legacy;
-
-  if (pivot.length > 0 && legacy.length === 0) return pivot;
-
-  if (legacy.length > 0) return legacy;
-
-  return pivot;
+  return derivePgcMasterRecords(worksheet, cnpjFallback, companyMap);
 }
 
 function filterByCredor(records: RowRecord[], credorColumn: string | undefined, credorSlug: string): RowRecord[] {
@@ -1208,7 +1094,7 @@ function buildEmissaoWorkbook(
   credorName: string,
   baseRows: RowRecord[],
   baseHeaders: string[],
-  empresaCnpjMap: Map<string, string>,
+  companyMap: Map<string, CompanyIdentity>,
   minimoRows: MinimoRecord[],
   descontosRows: DiscountLedgerEntry[],
 ): XLSX.WorkBook {
@@ -1232,19 +1118,19 @@ function buildEmissaoWorkbook(
     if (!empresaCol || !valorOriginalCol) continue;
 
     const empresa = toDisplayText(row[empresaCol]) || '-';
-    const cnpj =
-      resolveCnpjForEmpresa(empresa, empresaCnpjMap) ||
-      cnpjByEmpresaFromMinimo.get(normalizeEmpresaKey(empresa)) ||
-      '-';
+    const identity = resolveCompanyIdentity(empresa, companyMap);
+    const resolvedName = identity.fullName || empresa;
+    const cnpj = identity.cnpj || cnpjByEmpresaFromMinimo.get(normalizeEmpresaKey(empresa)) || '-';
+    
     const valor = parseNumber(row[valorOriginalCol]);
     if (valor === 0) continue;
 
-    const key = `${normalizeEmpresaKey(empresa)}::${cnpj}`;
+    const key = `${normalizeEmpresaKey(resolvedName)}::${cnpj}`;
     const current = consolidatedByEmpresa.get(key);
 
     if (!current) {
       consolidatedByEmpresa.set(key, {
-        EMPRESA: empresa,
+        EMPRESA: resolvedName,
         CREDOR: credorName,
         'CNPJ PARA EMISSAO': cnpj,
         VALOR: Number(valor.toFixed(2)),
@@ -1420,20 +1306,25 @@ export function startProcessingWorker(): Worker {
       );
       const sheetNames = workbook.SheetNames;
 
-      const pgcSheetName =
-        findSheetName(sheetNames, /\bpgc\b/) ?? findSheetName(sheetNames, /principal|base\s*pgc/);
+      const pgcSheetName = findSheetName(sheetNames, /^PGC/i);
       if (!pgcSheetName) {
-        throw new Error('PGC_SHEET_NOT_FOUND');
+        throw new Error('PGC_SHEET_NOT_FOUND (Aba que inicia com "PGC" nao encontrada)');
+      }
+
+      const baseDetailedSheetName = findSheetName(sheetNames, /^BASE\s*PGC/i);
+      if (!baseDetailedSheetName) {
+        // Fallback para "Base" se for o layout antigo, mas avisar.
+        const fallback = findSheetName(sheetNames, /\bbase\b/);
+        if (fallback) {
+          console.warn(`Usando aba ${fallback} como detalhamento (BASE PGC nao encontrada)`);
+        }
       }
 
       const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
-
-      const baseSheetName =
-        findSheetName(sheetNames, new RegExp(`base\\s*pgc\\s*${numeroPgc}`)) ??
-        findSheetName(sheetNames, /\bbase\b/);
-
+      const baseSheetName = baseDetailedSheetName || findSheetName(sheetNames, /\bbase\b/);
+      
       if (!baseSheetName) {
-        throw new Error('BASE_SHEET_NOT_FOUND');
+        throw new Error('DETAILED_BASE_SHEET_NOT_FOUND (Aba BASE PGC nao encontrada)');
       }
 
       const extratoSheetName = findSheetName(sheetNames, /\bextrato\b/);
@@ -1478,19 +1369,19 @@ export function startProcessingWorker(): Worker {
       await reportProgress(requestId, { stage: 'MINIMO', percent: 30, status: 'PROCESSING' });
 
       const cnpjFallback = buildCnpjFallbackMap(baseSheet);
-      const empresaCnpjMap = await loadEmpresaCnpjMap(path.dirname(workbookPath));
+      const companyMap = await loadEmpresaCnpjMap(path.dirname(workbookPath));
       const minimoRecords = await withProgressHeartbeat(
         requestId,
         { stage: 'MINIMO', percent: 30 },
         () =>
           withTimeout(
-            Promise.resolve(deriveMinimoRecords(workbook.Sheets[pgcSheetName], cnpjFallback, empresaCnpjMap)),
+            Promise.resolve(deriveMinimoRecords(workbook.Sheets[pgcSheetName], cnpjFallback, companyMap)),
             Number(process.env.MINIMO_TIMEOUT_MS ?? 20_000),
             'MINIMO',
           ),
       );
 
-          const discountHistoryState = await loadDiscountHistoryState();
+          const discountHistoryState = await loadDiscountHistoryState(flow);
 
       const baseValorColumn = detectColumn(baseSheet.headers, [
         /valor\s*original/,
@@ -1509,14 +1400,6 @@ export function startProcessingWorker(): Worker {
       await reportProgress(requestId, { stage: 'DESCONTOS', percent: 50, status: 'PROCESSING' });
 
       const discoveredCredores = new Map<string, string>();
-      for (const row of baseSheet.records) {
-        const name = row[baseSheet.credorColumn];
-        const slug = toSlug(name);
-        if (!slug) continue;
-        if (!discoveredCredores.has(slug)) {
-          discoveredCredores.set(slug, toCredorDisplayName(name) || slug);
-        }
-      }
       for (const row of minimoRecords) {
         const slug = toSlug(row.credor);
         if (!slug) continue;
@@ -1598,9 +1481,11 @@ export function startProcessingWorker(): Worker {
             discountHistoryState,
             baseRows,
             baseSheet.headers,
+            companyMap,
           );
 
           await appendDiscountHistoryLog(
+            flow,
             descontosRows.map((entry) => ({
               createdAt: new Date().toISOString(),
               requestId,
@@ -1615,17 +1500,7 @@ export function startProcessingWorker(): Worker {
             })),
           );
 
-          const valorBase =
-            baseValorColumn && baseRows.length > 0
-              ? baseRows.reduce((acc, row) => acc + parseNumber(row[baseValorColumn] ?? ''), 0)
-              : 0;
-          const valorMinimo = minimoRows.reduce((acc, row) => acc + row.total, 0);
-          const descontoAplicadoTotal = descontosRows.reduce(
-            (acc, row) => acc + Math.max(0, Number(row.aplicadoNoPgc ?? 0)),
-            0,
-          );
-          const valorBaseLiquido = Number(Math.max(0, valorBase - descontoAplicadoTotal).toFixed(2));
-          const valorTotalCredor = valorBase > 0 ? valorBaseLiquido : valorMinimo;
+          const valorTotalCredor = minimoRows.reduce((acc, row) => acc + row.total, 0);
 
           const periodoFromBase =
             basePeriodoColumn && baseRows.length > 0
@@ -1681,7 +1556,7 @@ export function startProcessingWorker(): Worker {
                       credorName,
                       baseRows,
                       baseSheet.headers,
-                      empresaCnpjMap,
+                      companyMap,
                       minimoRows,
                       descontosRows,
                     );
@@ -1764,7 +1639,7 @@ export function startProcessingWorker(): Worker {
         await yieldToEventLoop();
       }
 
-      await persistDiscountHistoryState(discountHistoryState);
+      await persistDiscountHistoryState(flow, discountHistoryState);
 
       if (await shouldStop(requestId)) return;
 

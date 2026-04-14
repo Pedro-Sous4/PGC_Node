@@ -338,30 +338,8 @@ export default function LaghettoSportsPage() {
           Deixe em branco para processar todos os credores. Exemplo: credor-a,credor-b
         </p>
 
-        <div className="card soft-accent" style={{ marginTop: 12 }}>
-          <span className="chip accent">Como funciona</span>
-          <p style={{ marginTop: 10 }}>
-            Atualizar status e registros: faz uma consulta manual ao andamento.
-          </p>
-          <p>
-            Baixar ZIP: baixa os arquivos de status, erros e credores deste processamento.
-          </p>
-          <p style={{ marginBottom: 0 }}>
-            Atualização automática: quando ligada, a tela atualiza sozinha até finalizar.
-          </p>
-        </div>
-
         <div className="actions-row" style={{ marginTop: 12 }}>
           <ActionButton type="submit" label="Iniciar processamento" icon="->" />
-          <ActionButton type="button" variant="secondary" onClick={refresh} disabled={!requestId} label="Atualizar status e registros" />
-          <ActionButton type="button" variant="secondary" onClick={downloadZip} disabled={!requestId} label="Baixar ZIP" />
-          <ActionButton
-            type="button"
-            variant="secondary"
-            onClick={() => setAutoRefresh((v) => !v)}
-            disabled={!requestId}
-            label={`Autoatualização: ${autoRefresh ? 'Ligada' : 'Desligada'}`}
-          />
         </div>
         {requestId && <p className="mono">ID da solicitação: {requestId}</p>}
         {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}

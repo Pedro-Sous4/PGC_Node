@@ -4,10 +4,12 @@ import {
   Get,
   Post,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Request } from 'express';
+import { AuthGuard } from '@nestjs/passport';
+import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -63,5 +65,40 @@ export class AuthController {
   ) {
     const userId = req.user?.sub ?? '';
     return this.authService.changePassword(userId, dto);
+  }
+
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  async googleAuth(@Req() req: any) {}
+
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  async googleAuthRedirect(@Req() req: any, @Res() res: Response) {
+    const result = await this.authService.validateOAuthUser(req.user);
+    return this.handleSocialRedirect(result, res);
+  }
+
+  @Get('microsoft')
+  @UseGuards(AuthGuard('microsoft'))
+  async microsoftAuth(@Req() req: any) {}
+
+  @Get('microsoft/callback')
+  @UseGuards(AuthGuard('microsoft'))
+  async microsoftAuthRedirect(@Req() req: any, @Res() res: Response) {
+    const result = await this.authService.validateOAuthUser({
+      email: req.user.email,
+      name: req.user.name,
+      provider: 'microsoft',
+      providerId: req.user.providerId,
+    });
+    return this.handleSocialRedirect(result, res);
+  }
+
+  private handleSocialRedirect(result: any, res: Response) {
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    if (!result.active) {
+      return res.redirect(`${frontendUrl}/auth/login?error=inactive`);
+    }
+    return res.redirect(`${frontendUrl}/auth/callback?token=${result.access_token}`);
   }
 }

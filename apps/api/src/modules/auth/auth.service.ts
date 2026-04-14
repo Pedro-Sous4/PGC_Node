@@ -13,6 +13,8 @@ import { SignupDto } from './dto/signup.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { RequestResetDto } from './dto/request-reset.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { SystemSettingsService } from '../system-settings/application/system-settings.service';
+import * as nodemailer from 'nodemailer';
 
 function sha256(input: string): string {
   return createHash('sha256').update(input).digest('hex');
@@ -23,6 +25,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
+    private readonly settingsService: SystemSettingsService,
   ) {}
 
   async signup(dto: SignupDto) {
@@ -38,13 +41,20 @@ export class AuthService {
         nome: dto.nome.trim(),
         email,
         passwordHash,
+        active: false, // Novos usuários nascem inativos
+        role: 'CONSULTA', // Novos usuários nascem como consulta
       },
     });
+
+    // Notificar admin
+    void this.notifyAdminOfNewSignup(user.nome, user.email);
 
     return {
       id: user.id,
       nome: user.nome,
       email: user.email,
+      role: user.role,
+      active: user.active,
       created_at: user.created_at,
     };
   }
@@ -56,9 +66,17 @@ export class AuthService {
       throw new UnauthorizedException('Credenciais invalidas.');
     }
 
+    if (!user.passwordHash) {
+      throw new UnauthorizedException('Esta conta utiliza login social. Utilize Google ou Microsoft para entrar.');
+    }
+
     const ok = await compare(dto.senha, user.passwordHash);
     if (!ok) {
       throw new UnauthorizedException('Credenciais invalidas.');
+    }
+
+    if (!user.active) {
+      throw new UnauthorizedException('Sua conta aguarda autorizacao do administrador.');
     }
 
     await this.prisma.appUser.update({
@@ -69,6 +87,7 @@ export class AuthService {
     const access_token = await this.jwtService.signAsync({
       sub: user.id,
       email: user.email,
+      role: user.role,
     });
 
     return {
@@ -77,6 +96,7 @@ export class AuthService {
         id: user.id,
         nome: user.nome,
         email: user.email,
+        role: user.role,
       },
     };
   }
@@ -88,6 +108,7 @@ export class AuthService {
         id: true,
         nome: true,
         email: true,
+        role: true,
         active: true,
         created_at: true,
         last_login_at: true,
@@ -101,6 +122,10 @@ export class AuthService {
   async changePassword(userId: string, dto: ChangePasswordDto) {
     const user = await this.prisma.appUser.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('Usuario nao encontrado.');
+
+    if (!user.passwordHash) {
+      throw new UnauthorizedException('Esta conta utiliza login social. Nao e possivel alterar a senha por aqui.');
+    }
 
     const ok = await compare(dto.senhaAtual, user.passwordHash);
     if (!ok) {
@@ -170,7 +195,89 @@ export class AuthService {
     return { reset: true };
   }
 
+  async validateOAuthUser(socialUser: { email: string; name: string; provider: string; providerId: string }) {
+    const email = socialUser.email.toLowerCase();
+    
+    let user = await this.prisma.appUser.findUnique({ where: { email } });
+
+    if (!user) {
+      // Criar novo usuário via social (nasce inativo)
+      user = await this.prisma.appUser.create({
+        data: {
+          email,
+          nome: socialUser.name,
+          provider: socialUser.provider,
+          providerId: socialUser.providerId,
+          active: false,
+          role: 'CONSULTA',
+        },
+      });
+
+      // Notificar admin
+      void this.notifyAdminOfNewSignup(user.nome, user.email);
+    } else {
+      // Já existe. Vincular se não tiver provider
+      if (!user.provider) {
+        user = await this.prisma.appUser.update({
+          where: { id: user.id },
+          data: {
+            provider: socialUser.provider,
+            providerId: socialUser.providerId,
+          },
+        });
+      }
+    }
+
+    if (!user.active) {
+      // Retornamos o usuário mas sinalizamos que não está ativo. 
+      // O controller deve redirecionar para uma página de erro/aviso.
+      return { user, active: false };
+    }
+
+    await this.prisma.appUser.update({
+      where: { id: user.id },
+      data: { last_login_at: new Date() },
+    });
+
+    const access_token = await this.jwtService.signAsync({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    });
+
+    return { access_token, user, active: true };
+  }
+
   logout() {
     return { logged_out: true };
+  }
+
+  private async notifyAdminOfNewSignup(nome: string, email: string) {
+    try {
+      const settings = await this.settingsService.getSettings();
+      const adminEmail = settings.smtp.testTo || settings.email.replyTo || settings.email.fromAddress;
+
+      if (!adminEmail || !settings.smtp.host) return;
+
+      const transporter = nodemailer.createTransport({
+        host: settings.smtp.host,
+        port: settings.smtp.port,
+        secure: settings.smtp.secure,
+        auth: settings.smtp.user && settings.smtp.pass ? { user: settings.smtp.user, pass: settings.smtp.pass } : undefined,
+      });
+
+      const fromLabel = settings.email.fromAddress
+        ? `${settings.email.fromName} <${settings.email.fromAddress}>`
+        : settings.email.fromName;
+
+      await transporter.sendMail({
+        from: fromLabel,
+        to: adminEmail,
+        subject: '[PGC] Novo cadastro aguardando autorização',
+        text: `Olá,\n\nUm novo usuário se cadastrou no sistema PGC e aguarda autorização:\n\nNome: ${nome}\nE-mail: ${email}\n\nPara autorizar, acesse o painel de Configurações -> Gestão de Usuários.`,
+      });
+    } catch (error) {
+      console.error('Falha ao notificar admin de novo signup:', error);
+    }
   }
 }

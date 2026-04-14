@@ -4,12 +4,12 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DashboardShell } from '../../components/dashboard-shell';
 import {
+  EmailTemplate,
   enviarEmails,
   exportCredorPdfUrl,
   getCredor,
   getEmailTemplate,
   openCredorFolder,
-  updateEmailTemplate,
 } from '../../../lib/api';
 import { ActionButton, AvatarBadge, ChartCard, DataTable, MetricCard, SectionCard } from '../../components/ui';
 
@@ -224,10 +224,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
     setEmailModalLoading(true);
     try {
       const template = await getEmailTemplate();
+      const isSports = String(credor?.grupo?.nome ?? '').toUpperCase() === 'SPORTS';
+      const msgDefault = isSports ? template.mensagem_laghetto_sports : template.mensagem_laghetto_golden;
+
       setEmailTemplateDraft({
-        mensagem_principal: template?.mensagem_principal ?? '',
-        texto_minimo: template?.texto_minimo ?? '',
-        texto_descontos: template?.texto_descontos ?? '',
+        mensagem_principal: msgDefault,
+        texto_minimo: template.texto_minimo,
+        texto_descontos: template.texto_descontos,
       });
     } catch (error) {
       setEmailModalMessage((error as Error).message);
@@ -248,11 +251,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
     setEmailModalSaving(true);
     setEmailModalMessage('');
     try {
-      await updateEmailTemplate(emailTemplateDraft);
       const result = await enviarEmails({
         escopo: 'credor',
         credorIds: [credor.id],
         numero_pgc: latestPgc,
+        custom_mensagem_principal: emailTemplateDraft.mensagem_principal,
+        custom_texto_minimo: emailTemplateDraft.texto_minimo,
+        custom_texto_descontos: emailTemplateDraft.texto_descontos,
       });
 
       const sent = result.total_geral?.sent ?? result.sent ?? 0;

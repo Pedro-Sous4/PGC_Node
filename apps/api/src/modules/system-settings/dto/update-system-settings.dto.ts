@@ -8,6 +8,11 @@ class EmpresaCnpjItemDto {
 
   @IsOptional()
   @IsString()
+  @MinLength(2)
+  apelido?: string;
+
+  @IsOptional()
+  @IsString()
   @MinLength(14)
   cnpj?: string;
 }

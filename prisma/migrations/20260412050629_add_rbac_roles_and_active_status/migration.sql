@@ -1,0 +1,9 @@
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('ADMIN', 'OPERADOR', 'CONSULTA');
+
+-- AlterTable
+ALTER TABLE "AppUser" ADD COLUMN     "provider" TEXT NOT NULL DEFAULT 'LOCAL',
+ADD COLUMN     "providerId" TEXT,
+ADD COLUMN     "role" "Role" NOT NULL DEFAULT 'CONSULTA',
+ALTER COLUMN "passwordHash" DROP NOT NULL,
+ALTER COLUMN "active" SET DEFAULT false;

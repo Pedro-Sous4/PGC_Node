@@ -187,15 +187,6 @@ export default function LgmPage() {
 
           <div className="actions-row" style={{ marginTop: 12 }}>
             <ActionButton type="submit" label="Iniciar processamento LGM" icon="->" />
-            <ActionButton type="button" variant="secondary" onClick={carregar} disabled={!requestId || loading} label={loading ? 'Atualizando...' : 'Atualizar status'} />
-            <ActionButton type="button" variant="secondary" onClick={downloadZip} disabled={!requestId} label="Baixar ZIP final" />
-            <ActionButton
-              type="button"
-              variant="secondary"
-              onClick={() => setAutoRefresh((v) => !v)}
-              disabled={!requestId}
-              label={`Autoatualização: ${autoRefresh ? 'Ligada' : 'Desligada'}`}
-            />
           </div>
 
           {requestId ? <p className="mono">ID da solicitação: {requestId}</p> : null}

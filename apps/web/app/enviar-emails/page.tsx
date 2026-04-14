@@ -9,10 +9,10 @@ import {
   getDashboardEnvio,
   getEmailReport,
   getEmailTemplate,
+  EmailTemplate,
   iniciarEnvioEmails,
   listCredores,
   listGrupos,
-  updateEmailTemplate,
 } from '../../lib/api';
 import { ActionButton, DataTable, MetricCard, SectionCard, StatusBadge } from '../components/ui';
 
@@ -27,6 +27,7 @@ export default function EnviarEmailsPage() {
   const [credorSearch, setCredorSearch] = useState('');
   const [credorOptions, setCredorOptions] = useState<Array<{ id: string; nome: string }>>([]);
   const [isCredorLoading, setIsCredorLoading] = useState(false);
+  const [allTemplates, setAllTemplates] = useState<EmailTemplate | null>(null);
   const [mensagemPrincipal, setMensagemPrincipal] = useState('');
   const [textoMinimo, setTextoMinimo] = useState('');
   const [textoDescontos, setTextoDescontos] = useState('');
@@ -77,11 +78,28 @@ export default function EnviarEmailsPage() {
     void (async () => {
       const [gruposData, template] = await Promise.all([listGrupos(), getEmailTemplate()]);
       setGrupos(gruposData);
-      setMensagemPrincipal(template.mensagem_principal);
+      setAllTemplates(template);
+
+      // Default: Golden (conforme solicitado para "Todos")
+      setMensagemPrincipal(template.mensagem_laghetto_golden);
       setTextoMinimo(template.texto_minimo);
       setTextoDescontos(template.texto_descontos);
     })();
   }, []);
+
+  // Troca dinamica de template baseada no grupo
+  useEffect(() => {
+    if (!allTemplates) return;
+
+    const grupoAtivo = grupos.find((g) => g.id === grupoId);
+    const isSports = grupoAtivo?.nome.toUpperCase() === 'SPORTS';
+
+    if (isSports) {
+      setMensagemPrincipal(allTemplates.mensagem_laghetto_sports);
+    } else {
+      setMensagemPrincipal(allTemplates.mensagem_laghetto_golden);
+    }
+  }, [grupoId, allTemplates, grupos]);
 
   useEffect(() => {
     void (async () => {
@@ -203,15 +221,6 @@ export default function EnviarEmailsPage() {
     };
   }, [dispatchId]);
 
-  async function handleSaveTemplate(event: FormEvent) {
-    event.preventDefault();
-    await updateEmailTemplate({
-      mensagem_principal: mensagemPrincipal,
-      texto_minimo: textoMinimo,
-      texto_descontos: textoDescontos,
-    });
-  }
-
   async function handleSend(event: FormEvent) {
     event.preventDefault();
     setSendError(null);
@@ -223,6 +232,9 @@ export default function EnviarEmailsPage() {
       numero_pgc: numeroPgc,
       escopo,
       credorIds: escopo === 'credor' ? selectedCredorIds : undefined,
+      custom_mensagem_principal: mensagemPrincipal,
+      custom_texto_minimo: textoMinimo,
+      custom_texto_descontos: textoDescontos,
     });
     setDispatchId(started.dispatchId);
   }
@@ -345,8 +357,11 @@ export default function EnviarEmailsPage() {
         )}
       </SectionCard>
 
-      <SectionCard badge="Modelo" title="Modelo de mensagem" tone="accent" className="mt-16">
-        <form onSubmit={handleSaveTemplate}>
+      <SectionCard badge="Modelo" title="Mensagem para este disparo" tone="accent" className="mt-16">
+        <p style={{ margin: '0 0 12px 0', fontSize: 13, color: 'var(--muted)' }}>
+          Edite o texto abaixo para este envio específico. As mudanças <strong>não alteram</strong> o modelo padrão nas configurações.
+        </p>
+        <div className="grid">
           <label>
             Mensagem principal
             <textarea
@@ -364,10 +379,7 @@ export default function EnviarEmailsPage() {
             Texto de descontos
             <textarea value={textoDescontos} onChange={(e) => setTextoDescontos(e.target.value)} rows={2} />
           </label>
-          <div style={{ marginTop: 12 }}>
-            <ActionButton type="submit" variant="secondary" label="Salvar modelo" />
-          </div>
-        </form>
+        </div>
       </SectionCard>
 
       <SectionCard badge="Consolidado" title="Resultado do último disparo" className="mt-16">

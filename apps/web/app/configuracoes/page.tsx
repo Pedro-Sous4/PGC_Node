@@ -248,7 +248,7 @@ export default function ConfiguracoesPage() {
     }
   }
 
-  function updateEmpresaCnpjRow(index: number, field: 'empresa' | 'cnpj', value: string) {
+  function updateEmpresaCnpjRow(index: number, field: 'empresa' | 'cnpj' | 'apelido', value: string) {
     setSettings((prev) => ({
       ...prev,
       empresasCnpj: prev.empresasCnpj.map((item, idx) =>
@@ -260,7 +260,7 @@ export default function ConfiguracoesPage() {
   function addEmpresaCnpjRow() {
     setSettings((prev) => ({
       ...prev,
-      empresasCnpj: [...prev.empresasCnpj, { empresa: '', cnpj: '' }],
+      empresasCnpj: [...prev.empresasCnpj, { empresa: '', cnpj: '', apelido: '' }],
     }));
   }
 
@@ -683,8 +683,9 @@ export default function ConfiguracoesPage() {
               <p style={{ marginTop: 0, marginBottom: 10, color: 'var(--muted)' }}>
                 Essa lista e utilizada como base para localizar o CNPJ por empresa no arquivo de emissao.
               </p>
-              <div className="grid" style={{ gridTemplateColumns: '1fr 240px 120px', gap: 8 }}>
-                <strong>Empresa</strong>
+              <div className="grid" style={{ gridTemplateColumns: 'minmax(250px, 1fr) 180px 180px 100px', gap: 8 }}>
+                <strong>Empresa (Oficial)</strong>
+                <strong>Apelido (Reconhecimento)</strong>
                 <strong>CNPJ</strong>
                 <strong>Ação</strong>
                 {settings.empresasCnpj.map((item, index) => (
@@ -692,7 +693,12 @@ export default function ConfiguracoesPage() {
                     <input
                       value={item.empresa}
                       onChange={(e) => updateEmpresaCnpjRow(index, 'empresa', e.target.value)}
-                      placeholder="Nome da empresa"
+                      placeholder="Nome oficial"
+                    />
+                    <input
+                      value={item.apelido || ''}
+                      onChange={(e) => updateEmpresaCnpjRow(index, 'apelido', e.target.value)}
+                      placeholder="Ex: RISERVA"
                     />
                     <input
                       value={item.cnpj}

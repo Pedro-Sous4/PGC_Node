@@ -16,6 +16,12 @@ import { getDashboardEnvio, listCredores } from '../lib/api';
 import { DashboardShell } from './components/dashboard-shell';
 import { ActionButton, DataTable, SectionCard, StatusBadge } from './components/ui';
 
+interface ProcessamentoRecente {
+  pgc: string;
+  credores: number;
+  enviados: number;
+}
+
 export default function HomePage() {
   const credoresQuery = useQuery({
     queryKey: ['home-credores-dashboard'],
@@ -157,7 +163,7 @@ export default function HomePage() {
                 </tr>
               </thead>
               <tbody>
-                {recentes.map((item, index) => {
+                {recentes.map((item: ProcessamentoRecente, index: number) => {
                   const concluido = item.credores > 0 && item.enviados >= item.credores;
                   return (
                     <tr key={`${item.pgc}-${index}`}>

@@ -33,6 +33,7 @@ export type SystemSettings = {
   };
   empresasCnpj: Array<{
     empresa: string;
+    apelido?: string;
     cnpj: string;
   }>;
   audit: {
@@ -127,6 +128,7 @@ export class SystemSettingsService {
           ? parsed.empresasCnpj
               .map((item) => ({
                 empresa: String((item as { empresa?: string }).empresa ?? '').trim(),
+                apelido: (item as { apelido?: string }).apelido?.trim(),
                 cnpj: String((item as { cnpj?: string }).cnpj ?? '').trim(),
               }))
               .filter((item) => item.empresa && item.cnpj)
@@ -175,6 +177,7 @@ export class SystemSettingsService {
       ? dto.empresasCnpj
           .map((item) => ({
             empresa: String(item?.empresa ?? '').trim(),
+            apelido: item?.apelido?.trim(),
             cnpj: String(item?.cnpj ?? '').trim(),
           }))
           .filter((item) => item.empresa && item.cnpj)

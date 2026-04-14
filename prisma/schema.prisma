@@ -231,17 +231,26 @@ model ReprocessItem {
   @@unique([reprocessJobId, credorSlug])
 }
 
+enum Role {
+  ADMIN
+  OPERADOR
+  CONSULTA
+}
+
 model AppUser {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   nome           String
-  email          String   @unique
-  passwordHash   String
-  active         Boolean  @default(true)
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
+  email          String    @unique
+  passwordHash   String?   // Opcional para logins sociais
+  role           Role      @default(CONSULTA)
+  active         Boolean   @default(false)
+  provider       String    @default("LOCAL") // LOCAL, GOOGLE, MICROSOFT
+  providerId     String?
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
   last_login_at  DateTime?
 
-  resetTokens PasswordResetToken[]
+  resetTokens    PasswordResetToken[]
 }
 
 model PasswordResetToken {

@@ -21,7 +21,7 @@ type PageHeaderProps = {
 export function PageHeader({ title, subtitle, actions = [] }: PageHeaderProps) {
   return (
     <div className="ui-page-header">
-      <div>
+      <div className="ui-header-info">
         <h1>{title}</h1>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
@@ -89,9 +89,9 @@ type MetricCardProps = {
 export function MetricCard({ label, value, hint, tone = 'neutral' }: MetricCardProps) {
   return (
     <article className={`ui-metric ui-card-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {hint ? <small>{hint}</small> : null}
+      <span className="ui-metric-label">{label}</span>
+      <strong className="stat-number">{value}</strong>
+      {hint ? <small className="ui-metric-hint">{hint}</small> : null}
     </article>
   );
 }

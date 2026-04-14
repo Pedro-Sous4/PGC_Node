@@ -11,13 +11,17 @@ import { UpdateTemplateDto } from '../dto/update-template.dto';
 import { SystemSettingsService } from '../../system-settings/application/system-settings.service';
 
 type EmailTemplate = {
-  mensagem_principal: string;
+  mensagem_principal?: string; // legível para migração
+  mensagem_laghetto_golden: string;
+  mensagem_laghetto_sports: string;
   texto_minimo: string;
   texto_descontos: string;
 };
 
 const DEFAULT_TEMPLATE: EmailTemplate = {
-  mensagem_principal:
+  mensagem_laghetto_golden:
+    '{credor.nome},\nOlá,\n\nSegue em anexo produtividade, relatório com os bloqueios de comissão (distrato e inadimplência) e relação de clientes repassados.\n\nNo e-mail constam 4 planilhas, sendo elas:\n- Os valores de cada empresa para emissão - PGC {historico.numero_pgc} EMISSÃO\n- O borderô com os clientes que estão sendo repassados - PGC {historico.numero_pgc}\n- A produtividade que está com o nome PRODUTIVIDADE {historico.periodo}\n- O histórico das comissões bloqueadas por inadimplência e/ou distrato - EXTRATO\n\n{info_minimo}\n{info_descontos}\n\n\nNotas devem ser enviadas até SEXTA-FEIRA, dia 16/{historico.periodo}, às 12:00h.\n\nInformamos que o endereço da empresa ALTOS DA BORGES EMPREENDIMENTOS IMOBILIÁRIOS LTDA foi alterado para o seguinte local:\nRua Luiz de Camões, 360, Vila Nova, Novo Hamburgo/RS – CEP: 93.520-280.\n\nRessaltamos que, a partir desta data, não serão aceitas notas fiscais emitidas com o endereço antigo.\n\nAtenciosamente,',
+  mensagem_laghetto_sports:
     '{credor.nome},\nOlá,\n\nSegue em anexo produtividade, relatório com os bloqueios de comissão (distrato e inadimplência) e relação de clientes repassados.\n\nNo e-mail constam 4 planilhas, sendo elas:\n- Os valores de cada empresa para emissão - PGC {historico.numero_pgc} EMISSÃO\n- O borderô com os clientes que estão sendo repassados - PGC {historico.numero_pgc}\n- A produtividade que está com o nome PRODUTIVIDADE {historico.periodo}\n- O histórico das comissões bloqueadas por inadimplência e/ou distrato - EXTRATO\n\n{info_minimo}\n{info_descontos}\n\n\nNotas devem ser enviadas até SEXTA-FEIRA, dia 16/{historico.periodo}, às 12:00h.\n\nInformamos que o endereço da empresa ALTOS DA BORGES EMPREENDIMENTOS IMOBILIÁRIOS LTDA foi alterado para o seguinte local:\nRua Luiz de Camões, 360, Vila Nova, Novo Hamburgo/RS – CEP: 93.520-280.\n\nRessaltamos que, a partir desta data, não serão aceitas notas fiscais emitidas com o endereço antigo.\n\nAtenciosamente,',
   texto_minimo: 'Mínimo garantido no valor de {valor_formatado}. Emitir nota para {empresa} - {cnpj}.',
   texto_descontos: 'Descontos aplicados:\n{linhas_descontos}',
@@ -326,7 +330,15 @@ export class EmailsService {
   async getTemplate(): Promise<EmailTemplate> {
     try {
       const content = await fs.readFile(this.templatePath, 'utf8');
-      return { ...DEFAULT_TEMPLATE, ...(JSON.parse(content) as Partial<EmailTemplate>) };
+      const parsed = JSON.parse(content) as Partial<EmailTemplate>;
+
+      // MIGRACAO INTELIGENTE: Se existir mensagem_principal mas nao as especificas, copiar.
+      if (parsed.mensagem_principal && (!parsed.mensagem_laghetto_golden || !parsed.mensagem_laghetto_sports)) {
+        parsed.mensagem_laghetto_golden = parsed.mensagem_laghetto_golden || parsed.mensagem_principal;
+        parsed.mensagem_laghetto_sports = parsed.mensagem_laghetto_sports || parsed.mensagem_principal;
+      }
+
+      return { ...DEFAULT_TEMPLATE, ...parsed };
     } catch {
       return DEFAULT_TEMPLATE;
     }
@@ -335,7 +347,7 @@ export class EmailsService {
   async updateTemplate(dto: UpdateTemplateDto): Promise<EmailTemplate> {
     await fs.mkdir(path.dirname(this.templatePath), { recursive: true });
     await fs.writeFile(this.templatePath, JSON.stringify(dto, null, 2), 'utf8');
-    return dto;
+    return this.getTemplate(); // Recarrega garantindo limpeza/migracao se necessario
   }
 
   async sendIndividual(credorId: string, numeroPgc: string) {
@@ -443,7 +455,7 @@ export class EmailsService {
     for (let i = 0; i < batches.length; i += 1) {
       const batchNumber = i + 1;
       const ids = batches[i];
-      const parcial = await this.sendToCredores(ids, dto.numero_pgc, batchNumber, dispatchId);
+      const parcial = await this.sendToCredores(ids, dto.numero_pgc, batchNumber, dispatchId, dto);
 
       total.sent += parcial.sent;
       total.failed += parcial.failed;
@@ -907,6 +919,7 @@ export class EmailsService {
     numeroPgc: string,
     batch?: number,
     dispatchId?: string,
+    dto?: SendEmailsDto,
   ): Promise<SendReport> {
     const template = await this.getTemplate();
     const pgcDir = await this.resolvePgcDir(numeroPgc);
@@ -1018,7 +1031,7 @@ export class EmailsService {
         const includeDescontos = !isSports && descontosLines.length > 0;
 
         const infoMinimo = includeMinimo
-          ? applyTemplate(template.texto_minimo, {
+          ? applyTemplate(dto?.custom_texto_minimo || template.texto_minimo, {
               'minimo.valor': minimo.valor,
               'minimo.empresa': minimo.empresa,
               'minimo.cnpj': minimo.cnpj,
@@ -1030,15 +1043,18 @@ export class EmailsService {
           : '';
 
         const infoDescontos = includeDescontos
-          ? applyTemplate(template.texto_descontos, {
+          ? applyTemplate(dto?.custom_texto_descontos || template.texto_descontos, {
               linhas_descontos: descontosLines.join('\n'),
               info_descontos: descontosLines.join('; '),
             })
           : '';
 
+        const baseMensagem = isSports ? template.mensagem_laghetto_sports : template.mensagem_laghetto_golden;
+        const baseCustom = dto?.custom_mensagem_principal || baseMensagem;
+
         const mensagemPrincipal = isSports && !hasProdutividade
-          ? adaptTemplateWithoutProdutividade(template.mensagem_principal)
-          : template.mensagem_principal;
+          ? adaptTemplateWithoutProdutividade(baseCustom)
+          : baseCustom;
 
         const bodyRaw = applyTemplate(mensagemPrincipal, {
           'credor.nome': credor.nomeExibivel,

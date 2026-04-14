@@ -6,6 +6,12 @@ export const metadata = {
   description: 'Operacao e acompanhamento de jobs PGC',
 };
 
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+};
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="pt-BR">

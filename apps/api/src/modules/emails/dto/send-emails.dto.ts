@@ -19,4 +19,16 @@ export class SendEmailsDto {
   @IsOptional()
   @IsString()
   empresa_nome_curto?: string;
+
+  @IsOptional()
+  @IsString()
+  custom_mensagem_principal?: string;
+
+  @IsOptional()
+  @IsString()
+  custom_texto_minimo?: string;
+
+  @IsOptional()
+  @IsString()
+  custom_texto_descontos?: string;
 }

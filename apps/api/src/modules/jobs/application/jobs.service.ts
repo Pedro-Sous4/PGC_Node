@@ -410,7 +410,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
             });
           }
 
-          if (numeroPgc && periodo && typeof valorTotal === 'number' && Number.isFinite(valorTotal) && valorTotal > 0) {
+          if (numeroPgc && periodo && typeof valorTotal === 'number' && Number.isFinite(valorTotal) && valorTotal >= 0) {
             const existing = await this.prisma.rendimento.findFirst({
               where: {
                 credorId: credor.id,
