@@ -490,6 +490,30 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
                 },
               });
             }
+<<<<<<< HEAD
+=======
+
+            await this.prisma.historicoPGC.deleteMany({
+              where: {
+                credorId: credor.id,
+                numero_pgc: numeroPgc,
+              },
+            });
+
+            await this.prisma.historicoPGC.create({
+              data: {
+                requestId,
+                credorId: credor.id,
+                numero_pgc: numeroPgc,
+                periodo,
+                valorTotal: new Prisma.Decimal(valorTotal),
+                evento: 'PROCESSAMENTO_JOB',
+                payload: {
+                  origem: 'jobs.internal-progress',
+                },
+              },
+            });
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
           }
         }
 
@@ -536,6 +560,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
             credorSlug: dto.appendError.credorSlug,
             code: dto.appendError.code,
             message: dto.appendError.message,
+            technicalDetail: dto.appendError.technicalDetail,
           },
         });
       }

@@ -326,6 +326,11 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
               tone="accent"
             />
             <MetricCard label="Média por período" value={`R$ ${toCurrency(averageValue)}`} />
+            <MetricCard
+              label="Saldo devedor"
+              value={`R$ ${toCurrency(Number(credor.resumo.saldo_devedor ?? 0))}`}
+              tone={Number(credor.resumo.saldo_devedor ?? 0) > 0 ? 'danger' : 'neutral'}
+            />
           </section>
 
           <section className="grid" style={{ marginTop: 16, gridTemplateColumns: '1.65fr 1fr' }}>

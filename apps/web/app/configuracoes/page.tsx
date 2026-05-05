@@ -260,7 +260,11 @@ export default function ConfiguracoesPage() {
   function addEmpresaCnpjRow() {
     setSettings((prev) => ({
       ...prev,
+<<<<<<< HEAD
       empresasCnpj: [...prev.empresasCnpj, { empresa: '', cnpj: '', apelido: '' }],
+=======
+      empresasCnpj: [...prev.empresasCnpj, { empresa: '', apelido: '', cnpj: '' }],
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     }));
   }
 
@@ -683,7 +687,11 @@ export default function ConfiguracoesPage() {
               <p style={{ marginTop: 0, marginBottom: 10, color: 'var(--muted)' }}>
                 Essa lista e utilizada como base para localizar o CNPJ por empresa no arquivo de emissao.
               </p>
+<<<<<<< HEAD
               <div className="grid" style={{ gridTemplateColumns: 'minmax(250px, 1fr) 180px 180px 100px', gap: 8 }}>
+=======
+              <div className="grid" style={{ gridTemplateColumns: 'minmax(280px, 1.2fr) minmax(180px, 0.8fr) 200px 100px', gap: 12 }}>
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
                 <strong>Empresa (Oficial)</strong>
                 <strong>Apelido (Reconhecimento)</strong>
                 <strong>CNPJ</strong>
@@ -699,6 +707,11 @@ export default function ConfiguracoesPage() {
                       value={item.apelido || ''}
                       onChange={(e) => updateEmpresaCnpjRow(index, 'apelido', e.target.value)}
                       placeholder="Ex: RISERVA"
+                    />
+                    <input
+                      value={item.apelido}
+                      onChange={(e) => updateEmpresaCnpjRow(index, 'apelido', e.target.value)}
+                      placeholder="Apelido/Filtro"
                     />
                     <input
                       value={item.cnpj}

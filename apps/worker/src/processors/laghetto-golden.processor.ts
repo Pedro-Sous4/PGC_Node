@@ -96,13 +96,14 @@ function extractMinimoRecordsFromFixedPosition(rows: unknown[][]): MinimoRecord[
   for (let rowIndex = START_ROW; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
 
-    // Layout Golden-only: credor índice 31 (coluna deslocada em relação ao AG visual).
-    // Fallback AG/AO/AP/AQ: índice 34 quando layout vier sem deslocamento.
-    const credor = toDisplayText(row[31]) || toDisplayText(row[34]);
-    // Mínimo: índice 39, fallback índice 40.
-    const minimo = parseNumber(row[39]) || parseNumber(row[40]);
-    const empresa = toDisplayText(row[40]);
-    const cnpj = toDisplayText(row[41]);
+    // Layout Golden-only: credor índice 32 (coluna AG).
+    const credor = toDisplayText(row[32]);
+    // Mínimo: índice 40 (coluna AO).
+    const minimo = parseNumber(row[40]);
+    // Empresa: índice 41 (coluna AP).
+    const empresa = toDisplayText(row[41]);
+    // CNPJ: índice 42 (coluna AQ).
+    const cnpj = toDisplayText(row[42]);
 
     console.log({ linha: rowIndex + 1, credor, minimo, empresa, cnpj });
 

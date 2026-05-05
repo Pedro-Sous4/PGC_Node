@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
-import { PrismaService } from '../../infra/prisma.service';
 import { CredoresController } from './credores.controller';
 import { CredoresService } from './application/credores.service';
+import { CarryoverService } from './application/carryover.service';
+import { PrismaService } from '../../infra/prisma.service';
 
 @Module({
   controllers: [CredoresController],
-  providers: [CredoresService, PrismaService],
-  exports: [CredoresService],
+  providers: [CredoresService, CarryoverService, PrismaService],
+  exports: [CredoresService, CarryoverService],
 })
 export class CredoresModule {}

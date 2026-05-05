@@ -142,76 +142,50 @@ type CredorDiscountHistoryRow = {
 export class CredoresService {
   constructor(private readonly prisma: PrismaService) {}
 
-  private async loadDiscountHistoryRowsForCredor(credorName: string): Promise<CredorDiscountHistoryRow[]> {
-    const workspaceRoot = resolveProjectRootFromCwd();
-    const candidateFiles = [
-      path.join(workspaceRoot, 'PGC', 'LGM', 'descontos-historico.json'),
-      path.join(workspaceRoot, 'PGC', 'SPORTS', 'descontos-historico.json'),
-    ];
+  private async loadDiscountHistoryRowsForCredor(credorId: string): Promise<CredorDiscountHistoryRow[]> {
+    const eventos = await this.prisma.eventoFinanceiro.findMany({
+      where: { 
+        credorId,
+        numero_pgc: { not: null }
+      },
+      orderBy: { created_at: 'desc' },
+    });
 
-    const credorSlug = toSlug(sanitizeLeadingCredorCode(credorName));
-    if (!credorSlug) return [];
+    const dedupedRows: CredorDiscountHistoryRow[] = [];
+    const seen = new Set<string>();
 
-    const allRows: CredorDiscountHistoryRow[] = [];
+    for (const evento of eventos) {
+      if (!evento.numero_pgc) continue;
+      
+      // Chave única para mostrar o último evento de cada PGC/Empresa
+      const key = `${evento.numero_pgc}::${normalizeEmpresaHistoryKey(evento.empresa)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
 
-    for (const filePath of candidateFiles) {
-      const exists = await fs
-        .stat(filePath)
-        .then((st) => st.isFile())
-        .catch(() => false);
-      if (!exists) continue;
+      const carryover = Number(evento.saldoAnterior);
+      const abatido = Number(evento.tipo === 'ABATIMENTO_PGC' ? evento.valor : 0);
+      const novoSaldo = Number(evento.saldoPosterior);
+      
+      // Reconstruindo as propriedades para o frontend compatível
+      // Desconto total representa a dívida considerada no momento (carryover + nova)
+      // Como o saldoPosterior = carryover + variacao -> variacao = novoSaldo - carryover
+      // E variacao = descontoAtual + carryover - abatido.
+      // Essa aproximação foca no que o banco tem disponível:
+      const descontoTotal = carryover + abatido + (novoSaldo > carryover ? novoSaldo - carryover : 0);
 
-      const parsed = await fs
-        .readFile(filePath, 'utf8')
-        .then((raw) => JSON.parse(raw) as DiscountHistoryLogEntry[])
-        .catch(() => [] as DiscountHistoryLogEntry[]);
-
-      if (!Array.isArray(parsed) || parsed.length === 0) continue;
-
-      const filtered = parsed.filter((entry) => {
-        const bySlug = toSlug(entry.credorSlug ?? '') === credorSlug;
-        const byName = toSlug(sanitizeLeadingCredorCode(entry.credorName ?? '')) === credorSlug;
-        return bySlug || byName;
+      dedupedRows.push({
+        id: evento.id,
+        pgc: evento.numero_pgc,
+        empresa: evento.empresa,
+        desconto_total: Number(descontoTotal.toFixed(2)),
+        desconto_aplicado: Number(abatido.toFixed(2)),
+        restante_proximo_pgc: Number(novoSaldo.toFixed(2)),
+        desconto_acumulado: Number(descontoTotal.toFixed(2)),
+        carryover_anterior: Number(carryover.toFixed(2)),
+        created_at: evento.created_at.toISOString(),
       });
-
-      for (const entry of filtered) {
-        const descontoAtual = Number(entry.descontoAtual ?? 0);
-        const carryoverAnterior = Number(entry.carryoverAnterior ?? 0);
-        const aplicadoNoPgc = Number(entry.aplicadoNoPgc ?? 0);
-        const saldoProximoPgc = Number(entry.saldoProximoPgc ?? 0);
-        const descontoTotal = Number((descontoAtual + carryoverAnterior).toFixed(2));
-
-        allRows.push({
-          id: `${entry.requestId ?? '-'}::${entry.numeroPgc ?? '-'}::${entry.empresa ?? '-'}::${entry.createdAt ?? ''}`,
-          pgc: String(entry.numeroPgc ?? '-'),
-          empresa: String(entry.empresa ?? '-'),
-          desconto_total: Number(descontoTotal.toFixed(2)),
-          desconto_aplicado: Number(aplicadoNoPgc.toFixed(2)),
-          restante_proximo_pgc: Number(saldoProximoPgc.toFixed(2)),
-          desconto_acumulado: Number(descontoTotal.toFixed(2)),
-          carryover_anterior: Number(carryoverAnterior.toFixed(2)),
-          created_at: entry.createdAt,
-        });
-      }
     }
 
-    const latestByPgcEmpresa = new Map<string, CredorDiscountHistoryRow>();
-    for (const row of allRows) {
-      const key = `${row.pgc}::${normalizeEmpresaHistoryKey(row.empresa)}`;
-      const current = latestByPgcEmpresa.get(key);
-      if (!current) {
-        latestByPgcEmpresa.set(key, row);
-        continue;
-      }
-
-      const currentTs = Date.parse(String(current.created_at ?? '')) || 0;
-      const nextTs = Date.parse(String(row.created_at ?? '')) || 0;
-      if (nextTs >= currentTs) {
-        latestByPgcEmpresa.set(key, row);
-      }
-    }
-
-    const dedupedRows = Array.from(latestByPgcEmpresa.values());
     dedupedRows.sort((a, b) => {
       const aPgc = Number(String(a.pgc).replace(/\D/g, ''));
       const bPgc = Number(String(b.pgc).replace(/\D/g, ''));
@@ -325,7 +299,7 @@ export class CredoresService {
 
     if (!credor) throw new NotFoundException('Credor nao encontrado.');
 
-    const descontos_historico = await this.loadDiscountHistoryRowsForCredor(credor.nomeExibivel);
+    const descontos_historico = await this.loadDiscountHistoryRowsForCredor(credor.id);
 
     const total = credor.rendimentos.reduce((acc, item) => acc + Number(item.valor), 0);
     const quantidade_periodos = new Set(
@@ -336,13 +310,37 @@ export class CredoresService {
 
     const media = quantidade_periodos > 0 ? total / quantidade_periodos : 0;
 
+    // Calcula saldo devedor atual (soma do restante_proximo_pgc do PGC mais recente de cada empresa)
+    const latestPgcMap = new Map<string, number>();
+    for (const row of descontos_historico) {
+      const pgcNum = Number(String(row.pgc).replace(/\D/g, '')) || 0;
+      const key = normalizeEmpresaHistoryKey(row.empresa);
+      if (!latestPgcMap.has(key) || pgcNum > (latestPgcMap.get(key) ?? 0)) {
+        latestPgcMap.set(key, pgcNum);
+      }
+    }
+
+    const saldo_devedor = descontos_historico.reduce((acc, row) => {
+      const pgcNum = Number(String(row.pgc).replace(/\D/g, '')) || 0;
+      const key = normalizeEmpresaHistoryKey(row.empresa);
+      if (pgcNum === latestPgcMap.get(key)) {
+        return acc + row.restante_proximo_pgc;
+      }
+      return acc;
+    }, 0);
+
     return {
       ...credor,
       descontos_historico,
       resumo: {
         total,
         media,
+<<<<<<< HEAD
         quantidade_periodos,
+=======
+        saldo_devedor,
+        quantidade_periodos: new Set(credor.rendimentos.map((item) => item.referencia)).size,
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
       },
     };
   }

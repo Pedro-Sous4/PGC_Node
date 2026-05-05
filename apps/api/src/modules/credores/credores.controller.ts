@@ -12,10 +12,12 @@ import {
   StreamableFile,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Response } from 'express';
 import * as XLSX from 'xlsx';
 import { CredoresService } from './application/credores.service';
+import { CarryoverService } from './application/carryover.service';
+import { PrismaService } from '../../infra/prisma.service';
 import { BatchActionDto } from './dto/batch-action.dto';
 import { CreateCredorDto } from './dto/create-credor.dto';
 import { ListCredoresQueryDto } from './dto/list-credores-query.dto';
@@ -29,7 +31,11 @@ import { Role } from '@prisma/client';
 @Controller('credores')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CredoresController {
-  constructor(private readonly service: CredoresService) {}
+  constructor(
+    private readonly service: CredoresService,
+    private readonly carryoverService: CarryoverService,
+    private readonly prisma: PrismaService,
+  ) {}
 
   @Get()
   @Roles(Role.ADMIN, Role.OPERADOR, Role.CONSULTA)
@@ -143,5 +149,32 @@ export class CredoresController {
     const buffer = await this.service.generateRendimentoPdf(id);
     res.setHeader('Content-Disposition', 'attachment; filename="rendimento.pdf"');
     return new StreamableFile(buffer);
+  }
+
+  @Get(':id/saldo/reconstruir')
+  @ApiOperation({ summary: 'Reconstrói o saldo do credor em uma data específica (Time Travel)' })
+  async reconstruirSaldo(
+    @Param('id') id: string,
+    @Query('empresa') empresa: string,
+    @Query('data') dataIso: string,
+  ) {
+    const dataCorte = dataIso ? new Date(dataIso) : new Date();
+    const saldo = await this.carryoverService.reconstruirSaldoEm(id, empresa, dataCorte);
+    return { id, empresa, dataCorte, saldo };
+  }
+
+  @Get(':id/eventos')
+  @ApiOperation({ summary: 'Lista todos os eventos financeiros do credor (Audit Trail)' })
+  async listarEventos(
+    @Param('id') id: string,
+    @Query('empresa') empresa?: string,
+  ) {
+    return this.prisma.eventoFinanceiro.findMany({
+      where: { 
+        credorId: id,
+        ...(empresa ? { empresa } : {})
+      },
+      orderBy: { created_at: 'desc' },
+    });
   }
 }

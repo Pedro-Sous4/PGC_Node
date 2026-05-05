@@ -48,6 +48,7 @@ backups/
 # GitHub workflows (token sem scope workflow)
 .github/
 
+<<<<<<< HEAD
 # Arquivos Grandes / Temporários
 PGC_Update.zip
 tmp_bad_upload.xlsx
@@ -59,3 +60,9 @@ scripts/*.js
 *.ps1
 *.exe
 *.bat
+=======
+# Excel lock files
+~$*.xlsx
+*.tmp
+
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)

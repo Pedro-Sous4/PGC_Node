@@ -920,12 +920,129 @@ function derivePgcMasterRecords(
 }
 
 
+function deriveMinimoRecordsFromGoldenFixedLayout(
+  worksheet: XLSX.WorkSheet,
+  cnpjFallback: Map<string, string>,
+  empresaCnpjMap: Map<string, string>,
+): MinimoRecord[] {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    raw: false,
+    defval: '',
+    range: 0, 
+  }) as unknown[][];
+
+  const records: MinimoRecord[] = [];
+  
+  let headerRowIndex = -1;
+  for (let i = 0; i < 20; i++) {
+    const row = (rows[i] || []).map(c => normalizeText(c));
+    if (row.includes('credor') || row.includes('nome')) {
+      headerRowIndex = i;
+      break;
+    }
+  }
+
+  const headerRow = headerRowIndex !== -1 ? (rows[headerRowIndex] || []).map((cell) => normalizeText(cell)) : [];
+  let colCredor = headerRow.findIndex((h) => h.includes('credor') || h === 'nome');
+  let colMinimo = headerRow.findIndex((h) => h.includes('minimo') || h.includes('fixo') || h.includes('fec'));
+  let colEmpresa = headerRow.findIndex((h) => h.includes('empresa') || h.includes('emissao'));
+  let colCnpj = headerRow.findIndex((h) => h.includes('cnpj'));
+
+  const START_ROW = headerRowIndex !== -1 ? headerRowIndex + 1 : 0;
+
+  for (let i = START_ROW; i < rows.length; i++) {
+    const row = rows[i] || [];
+    
+    // Busca o nome: prioriza a coluna detectada ou as colunas AG (32) / AF (31)
+    let credorRaw = '';
+    const potentialIndices = [colCredor, 32, 31].filter(idx => idx !== -1);
+    for (const idx of potentialIndices) {
+      const val = String(row[idx] || '').trim();
+      if (val.length > 5) {
+        credorRaw = val;
+        break;
+      }
+    }
+
+    if (!credorRaw) continue;
+
+    // Validação estrita do nome para evitar lixo (como "Total Geral", "R$ 1.000", etc)
+    const normalizedName = normalizeText(credorRaw);
+    if (
+      normalizedName.includes('total') || 
+      normalizedName.includes('geral') || 
+      normalizedName.includes('comissao') ||
+      normalizedName.includes('venda') ||
+      normalizedName.includes('emissao') ||
+      normalizedName.includes('r$') ||
+      /\d/.test(credorRaw) // Nomes de credores não costumam ter números (exceto CNPJ que tratamos depois)
+    ) {
+      continue;
+    }
+
+    const credor = toCredorDisplayName(credorRaw);
+    if (!credor || !credor.includes(' ')) continue;
+
+    // Busca o valor do mínimo
+    let minimo = colMinimo !== -1 ? parseNumber(row[colMinimo]) : 0;
+    if (minimo <= 0) {
+      // Escaneia a linha em busca de um valor monetário razoável
+      for (let idx = 10; idx < row.length; idx++) {
+        if (idx === colCredor || idx === 31 || idx === 32) continue;
+        const val = parseNumber(row[idx]);
+        if (val > 0 && val < 50000) {
+          minimo = val;
+          break;
+        }
+      }
+    }
+
+    if (minimo <= 0) continue;
+
+    const empresa = toDisplayText(row[colEmpresa]) || toDisplayText(row[40]) || '';
+    const cnpj = normalizeDocument(row[colCnpj]) || normalizeDocument(row[41]) || '';
+    
+    const credorSlug = toSlug(credor);
+    const cnpjFromBase = cnpjFallback.get(credorSlug) ?? '';
+    const cnpjByEmpresa = empresa ? resolveCnpjForEmpresa(empresa, empresaCnpjMap) : '';
+
+    records.push({
+      credor,
+      empresa: empresa || '',
+      cnpj: cnpj || cnpjFromBase || cnpjByEmpresa || '',
+      minimo,
+      desconto: 0,
+      total: minimo,
+    });
+  }
+
+  return records;
+}
+
 function deriveMinimoRecords(
   worksheet: XLSX.WorkSheet,
   cnpjFallback: Map<string, string>,
   companyMap: Map<string, CompanyIdentity>,
 ): MinimoRecord[] {
+<<<<<<< HEAD
   return derivePgcMasterRecords(worksheet, cnpjFallback, companyMap);
+=======
+  const golden = deriveMinimoRecordsFromGoldenFixedLayout(worksheet, cnpjFallback, empresaCnpjMap);
+  if (golden.length > 0) return golden;
+
+  const legacy = deriveMinimoRecordsFromLegacyLayout(worksheet, cnpjFallback, empresaCnpjMap);
+  const pivot = deriveMinimoRecordsFromPivotLayout(worksheet, cnpjFallback, empresaCnpjMap);
+
+  const legacyHasExplicitDiscount = legacy.some((row) => Number(row.desconto ?? 0) > 0);
+  if (legacyHasExplicitDiscount) return legacy;
+
+  if (pivot.length > 0 && legacy.length === 0) return pivot;
+
+  if (legacy.length > 0) return legacy;
+
+  return pivot;
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
 }
 
 function filterByCredor(records: RowRecord[], credorColumn: string | undefined, credorSlug: string): RowRecord[] {
@@ -1338,11 +1455,21 @@ export function startProcessingWorker(): Worker {
       );
       const sheetNames = workbook.SheetNames;
 
+<<<<<<< HEAD
       const pgcSheetName = findSheetName(sheetNames, /^PGC/i);
+=======
+      const isNotRetencao = (name: string) => !normalizeText(name).includes('retencao');
+
+      const pgcSheetName =
+        sheetNames.find((n) => /\bpgc\b/.test(normalizeText(n)) && isNotRetencao(n)) ??
+        sheetNames.find((n) => /principal|base\s*pgc/.test(normalizeText(n)) && isNotRetencao(n));
+
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
       if (!pgcSheetName) {
         throw new Error('PGC_SHEET_NOT_FOUND (Aba que inicia com "PGC" nao encontrada)');
       }
 
+<<<<<<< HEAD
       const baseDetailedSheetName = findSheetName(sheetNames, /^BASE\s*PGC/i);
       if (!baseDetailedSheetName) {
         // Fallback para "Base" se for o layout antigo, mas avisar.
@@ -1355,6 +1482,9 @@ export function startProcessingWorker(): Worker {
       const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
       const baseSheetName = baseDetailedSheetName || findSheetName(sheetNames, /\bbase\b/);
       
+=======
+      const baseSheetName = sheetNames.find((n) => /\bbase\b/.test(normalizeText(n)) && isNotRetencao(n));
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
       if (!baseSheetName) {
         throw new Error('DETAILED_BASE_SHEET_NOT_FOUND (Aba BASE PGC nao encontrada)');
       }

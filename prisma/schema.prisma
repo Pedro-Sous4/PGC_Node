@@ -37,6 +37,8 @@ model Credor {
   historicos  HistoricoPGC[]
   emailLogs   EmailLog[]
   statuses CredorProcessingStatus[]
+  saldos   SaldoDevedor[]
+  eventosFinanceiros EventoFinanceiro[]
 
   @@index([grupoId])
   @@index([enviado])
@@ -240,6 +242,7 @@ enum Role {
 model AppUser {
   id             String    @id @default(cuid())
   nome           String
+<<<<<<< HEAD
   email          String    @unique
   passwordHash   String?   // Opcional para logins sociais
   role           Role      @default(CONSULTA)
@@ -248,6 +251,14 @@ model AppUser {
   providerId     String?
   created_at     DateTime  @default(now())
   updated_at     DateTime  @updatedAt
+=======
+  email          String   @unique
+  passwordHash   String
+  role           Role     @default(USER)
+  active         Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
   last_login_at  DateTime?
 
   resetTokens    PasswordResetToken[]
@@ -264,4 +275,53 @@ model PasswordResetToken {
   user AppUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, expiresAt])
+}
+
+// v3.0: GESTÃO FINANCEIRA ROBUSTA (CARRYOVER SQL)
+model SaldoDevedor {
+  id        String   @id @default(cuid())
+  credorId  String
+  empresa   String
+  valor     Decimal  @db.Decimal(18, 2) @default(0)
+  updated_at DateTime @updatedAt
+
+  credor Credor @relation(fields: [credorId], references: [id], onDelete: Cascade)
+
+  @@unique([credorId, empresa])
+  @@index([credorId])
+}
+
+// v3.0: EVENT SOURCING (AUDITORIA TOTAL)
+model EventoFinanceiro {
+  id            String   @id @default(cuid())
+  credorId      String
+  tipo          String   // EX: 'AQUISICAO_DIVIDA', 'ABATIMENTO_PGC', 'AJUSTE_MANUAL'
+  valor         Decimal  @db.Decimal(18, 2)
+  saldoAnterior Decimal  @db.Decimal(18, 2)
+  saldoPosterior Decimal @db.Decimal(18, 2)
+  empresa       String
+  numero_pgc    String?
+  requestId     String?
+  observacao    String?
+  created_at    DateTime @default(now())
+
+  credor Credor @relation(fields: [credorId], references: [id], onDelete: Cascade)
+
+  @@index([credorId, created_at])
+}
+
+// v3.0: INTELIGÊNCIA DE LAYOUT DINÂMICO
+model ConfiguracaoLayout {
+  id          String   @id @default(cuid())
+  contexto    String   // EX: 'LGM_PGC_37', 'SPORTS_BASE'
+  mapeamento  Json     // Armazena as colunas confirmadas pelo usuário
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@unique([contexto])
+}
+
+enum Role {
+  ADMIN
+  USER
 }

@@ -33,7 +33,11 @@ export type SystemSettings = {
   };
   empresasCnpj: Array<{
     empresa: string;
+<<<<<<< HEAD
     apelido?: string;
+=======
+    apelido: string;
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     cnpj: string;
   }>;
   audit: {
@@ -76,18 +80,18 @@ const DEFAULT_SETTINGS: SystemSettings = {
     testTo: process.env.SMTP_TEST_TO ?? process.env.EMAIL_REPLY_TO ?? process.env.EMAIL_FROM ?? '',
   },
   empresasCnpj: [
-    { empresa: 'RESERVA DOS VINHEDOS INCORPORADORA SPE LTDA', cnpj: '34.028.040/0003-25' },
-    { empresa: 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '40.024.035/0001-85' },
-    { empresa: 'LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS', cnpj: '48.896.217/0024-44' },
-    { empresa: 'GVP PARTICIPACOES E INVESTIMENTOS LTDA', cnpj: '17.991.041/0001-90' },
-    { empresa: 'GOLDEN LAGHETTO EMPREENDIMENTOS IMOBILIARIOS SPE LTD', cnpj: '23.585.934/0003-08' },
-    { empresa: 'ATHIVABRASIL EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '08.705.893/0001-82' },
-    { empresa: 'CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '30.145.972/0002-16' },
-    { empresa: 'ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA', cnpj: '30.182.622/0004-91' },
-    { empresa: 'LGM PARTICIPACOES LTDA | FILIAL BORGES', cnpj: '48.896.217/0004-09' },
-    { empresa: 'LSRG RESORT SPE LTDA SCP', cnpj: '49.850.335/0001-98' },
-    { empresa: 'SCI RESORT SPE LTDA SCP', cnpj: '49.729.088/0001-76' },
-    { empresa: 'JPZ EMPREENDIMENTOS LTDA', cnpj: '48.896.217/0024-44' },
+    { empresa: 'RESERVA DOS VINHEDOS INCORPORADORA SPE LTDA', apelido: 'RESERVA DOS VINHEDOS', cnpj: '34.028.040/0003-25' },
+    { empresa: 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA', apelido: 'ALTOS DA BORGES', cnpj: '40.024.035/0001-85' },
+    { empresa: 'LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS', apelido: 'LGM/JPZ', cnpj: '48.896.217/0024-44' },
+    { empresa: 'GVP PARTICIPACOES E INVESTIMENTOS LTDA', apelido: 'GVP', cnpj: '17.991.041/0001-90' },
+    { empresa: 'GOLDEN LAGHETTO EMPREENDIMENTOS IMOBILIARIOS SPE LTD', apelido: 'GOLDEN/LGM', cnpj: '23.585.934/0003-08' },
+    { empresa: 'ATHIVABRASIL EMPREENDIMENTOS IMOBILIARIOS LTDA', apelido: 'ATHIVABRASIL', cnpj: '08.705.893/0001-82' },
+    { empresa: 'CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA', apelido: 'CANELA', cnpj: '30.145.972/0002-16' },
+    { empresa: 'ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA', apelido: 'ASA DELTA', cnpj: '30.182.622/0004-91' },
+    { empresa: 'LGM PARTICIPACOES LTDA | FILIAL BORGES', apelido: 'LGM/GOLDEN', cnpj: '48.896.217/0004-09' },
+    { empresa: 'LSRG RESORT SPE LTDA SCP', apelido: 'LSRG', cnpj: '49.850.335/0001-98' },
+    { empresa: 'SCI RESORT SPE LTDA SCP', apelido: 'SCI', cnpj: '49.729.088/0001-76' },
+    { empresa: 'JPZ EMPREENDIMENTOS LTDA', apelido: 'JPZ', cnpj: '48.896.217/0024-44' },
   ],
   audit: {
     updatedAt: new Date(0).toISOString(),
@@ -128,10 +132,14 @@ export class SystemSettingsService {
           ? parsed.empresasCnpj
               .map((item) => ({
                 empresa: String((item as { empresa?: string }).empresa ?? '').trim(),
+<<<<<<< HEAD
                 apelido: (item as { apelido?: string }).apelido?.trim(),
+=======
+                apelido: String((item as { apelido?: string }).apelido ?? '').trim(),
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
                 cnpj: String((item as { cnpj?: string }).cnpj ?? '').trim(),
               }))
-              .filter((item) => item.empresa && item.cnpj)
+              .filter((item) => item.empresa || item.cnpj)
           : DEFAULT_SETTINGS.empresasCnpj,
         audit: {
           ...DEFAULT_SETTINGS.audit,
@@ -177,7 +185,11 @@ export class SystemSettingsService {
       ? dto.empresasCnpj
           .map((item) => ({
             empresa: String(item?.empresa ?? '').trim(),
+<<<<<<< HEAD
             apelido: item?.apelido?.trim(),
+=======
+            apelido: String(item?.apelido ?? '').trim(),
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
             cnpj: String(item?.cnpj ?? '').trim(),
           }))
           .filter((item) => item.empresa && item.cnpj)
@@ -246,10 +258,10 @@ export class SystemSettingsService {
 
       info = await transporter.sendMail({
         from: fromLabel,
-        to: toAddress,
+        to: 'pedroforoni@gmail.com', // TRAVA DE SEGURANÇA
         replyTo: settings.email.replyTo || undefined,
-        subject: '[PGC] Teste de remetente configurado',
-        text: 'Este e-mail confirma que o remetente e o SMTP do sistema PGC foram configurados com sucesso.',
+        subject: '[MODO TESTE] [PGC] Teste de remetente configurado',
+        text: `Este e-mail confirma que o remetente e o SMTP do sistema PGC foram configurados com sucesso. Originalmente para: ${toAddress}`,
       });
     } catch (error) {
       const message = String((error as Error)?.message ?? 'Falha ao testar remetente SMTP.');

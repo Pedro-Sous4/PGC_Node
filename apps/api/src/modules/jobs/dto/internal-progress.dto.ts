@@ -11,6 +11,10 @@ class ErrorDto {
 
   @IsString()
   message!: string;
+
+  @IsOptional()
+  @IsString()
+  technicalDetail?: string;
 }
 
 class CredorUpdateDto {

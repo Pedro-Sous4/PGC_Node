@@ -581,8 +581,8 @@ export class EmailsService {
       const credorGoldenNorm = normalizeGoldenCredorName(credor);
       if (!credor || (credorNorm !== normalizedCredor && credorGoldenNorm !== normalizedCredorGolden)) continue;
 
-      const valor = textOf(row['MINIMO/FIXO'] ?? row.MINIMO ?? row.minimo);
-      const empresa = textOf(row['EMPRESA EMISSAO'] ?? row.EMPRESA ?? row.empresa);
+      const valor = textOf(row['MINIMO/FIXO GARANTIDO PARA EMISSAO NF'] ?? row['MINIMO/FIXO'] ?? row.MINIMO ?? row.minimo);
+      const empresa = textOf(row['EMPRESA EMISSÃO NF'] ?? row['EMPRESA EMISSAO'] ?? row.EMPRESA ?? row.empresa);
       const cnpjRaw = textOf(row.CNPJ ?? row.cnpj);
       const descricao = textOf(row.DESCRICAO ?? row.descricao);
       const cnpj = cnpjRaw || empresaMap.get(empresa.toUpperCase()) || '-';
@@ -608,17 +608,28 @@ export class EmailsService {
       };
     }
 
+<<<<<<< HEAD
     // Fallback de layout tabular clássico (indices fixos)
+=======
+    const rowsArray = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
+      header: 1,
+      raw: false,
+      defval: '',
+    });
+
+    // Fallback de layout tabular clássico (Novo Padrão).
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     for (let i = 1; i < rowsArray.length; i += 1) {
       const row = rowsArray[i];
-      const credor = textOf(row[32]);
+      const credor = textOf(row[32]); // AG
       const credorNorm = normalizeCredorKey(credor);
       const credorGoldenNorm = normalizeGoldenCredorName(credor);
       if (!credor || (credorNorm !== normalizedCredor && credorGoldenNorm !== normalizedCredorGolden)) continue;
 
-      const valor = textOf(row[40]);
-      const empresa = textOf(row[41]);
-      const cnpj = empresaMap.get(empresa.toUpperCase()) || '-';
+      const valor = textOf(row[40]); // AO
+      const empresa = textOf(row[41]); // AP
+      const cnpjRaw = textOf(row[42]); // AQ
+      const cnpj = cnpjRaw || empresaMap.get(empresa.toUpperCase()) || '-';
 
       const valorNum = parseNumberLikeWorker(valor);
       if (valorNum > 0) {
@@ -639,22 +650,26 @@ export class EmailsService {
       };
     }
 
+<<<<<<< HEAD
     // Fallback Golden pivô
+=======
+    // Fallback Golden pivô — regra AA PGC: credor AG (32), mínimo AO (40), empresa AP (41), cnpj AQ (42).
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     const GOLDEN_START_ROW = 7;
     for (let i = GOLDEN_START_ROW; i < rowsArray.length; i += 1) {
       const row = rowsArray[i] ?? [];
-      const credor = textOf(row[31]) || textOf(row[34]);
+      const credor = textOf(row[32]);
       if (!credor) continue;
 
       const credorNorm = normalizeCredorKey(credor);
       const credorGoldenNorm = normalizeGoldenCredorName(credor);
       if (credorNorm !== normalizedCredor && credorGoldenNorm !== normalizedCredorGolden) continue;
 
-      const minimo = parseNumberLikeWorker(row[39]) || parseNumberLikeWorker(row[40]);
+      const minimo = parseNumberLikeWorker(row[40]);
       if (minimo <= 0) continue;
 
-      const empresa = textOf(row[40]);
-      const cnpjRaw = textOf(row[41]);
+      const empresa = textOf(row[41]);
+      const cnpjRaw = textOf(row[42]);
       const cnpj = cnpjRaw || empresaMap.get(empresa.toUpperCase()) || '-';
 
       results.push({
@@ -1122,12 +1137,13 @@ export class EmailsService {
         }
 
         const subjectTemplate = systemSettings.email.assuntoPadrao || 'PGC {historico.numero_pgc} - {historico.periodo}';
-        const subject = applyTemplate(subjectTemplate, {
+        const subjectRaw = applyTemplate(subjectTemplate, {
           'historico.numero_pgc': numeroPgc,
           'historico.periodo': historico?.periodo ?? credor.periodo ?? '-',
           'credor.nome': credor.nomeExibivel,
         });
 
+<<<<<<< HEAD
         // AUDITORIA FINAL
         const fsBody = require('fs');
         const bodyLog = `\n--- [FINAL AUDIT] Credor: ${credor.nomeExibivel} ---\n` +
@@ -1136,9 +1152,15 @@ export class EmailsService {
         fsBody.appendFileSync('c:\\PGC_Node\\scripts\\test-validation.log', bodyLog);
 
         // ENVIO REAL: Utiliza o transportADOR SMTP configurado
+=======
+        // TRAVA DE SEGURANÇA PARA TESTES
+        const subject = `[MODO TESTE] ${subjectRaw} (Para: ${credor.email})`;
+        const targetEmail = 'pedroforoni@gmail.com';
+
+>>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
         await transporter.sendMail({
           from: senderLabel,
-          to: credor.email,
+          to: targetEmail,
           replyTo: replyTo || undefined,
           subject,
           text: body,
