@@ -474,7 +474,7 @@ function applyDiscountsForCredor(
   const ledger: DiscountLedgerEntry[] = [];
 
   for (const resolvedName of resolvedCompanies) {
-    const historyKey = `${credorSlug}::${resolvedName}`;
+    const historyKey = buildDiscountHistoryKey(credorSlug, resolvedName);
     const carryoverAnterior = historyState.get(historyKey) ?? 0;
     const descontoAtual = currentDiscountByResolvedName.get(resolvedName) ?? 0;
     const demandaTotal = Number((descontoAtual + carryoverAnterior).toFixed(2));
@@ -1773,12 +1773,6 @@ export function startProcessingWorker(): Worker {
                 carryoverAnterior: entry.carryoverAnterior,
                 aplicadoNoPgc: entry.aplicadoNoPgc,
                 saldoProximoPgc: entry.saldoProximoPgc,
-              })),
-              minimoHistory: minimoRows.map((row) => ({
-                empresa: row.empresa,
-                valorMinimo: row.minimo,
-                valorBruto: row.valorBruto,
-                valorTotal: row.total,
               })),
             },
           });

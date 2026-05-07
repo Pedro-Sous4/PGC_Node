@@ -34,19 +34,6 @@ class DiscountHistoryEntryDto {
   saldoProximoPgc!: number;
 }
 
-class MinimoHistoryEntryDto {
-  @IsString()
-  empresa!: string;
-
-  @IsNumber()
-  valorMinimo!: number;
-
-  @IsNumber()
-  valorBruto!: number;
-
-  @IsNumber()
-  valorTotal!: number;
-}
 
 class CredorUpdateDto {
   @IsString()
@@ -85,11 +72,6 @@ class CredorUpdateDto {
   @Type(() => DiscountHistoryEntryDto)
   discountHistory?: DiscountHistoryEntryDto[];
 
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => MinimoHistoryEntryDto)
-  minimoHistory?: MinimoHistoryEntryDto[];
 }
 
 class ArtifactDto {

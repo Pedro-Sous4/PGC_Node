@@ -39,7 +39,6 @@ model Credor {
   statuses CredorProcessingStatus[]
   saldos   SaldoDevedor[]
   eventosFinanceiros EventoFinanceiro[]
-  minimosHistorico   HistoricoMinimo[]
 
   @@index([grupoId])
   @@index([enviado])
@@ -302,21 +301,6 @@ model EventoFinanceiro {
   @@index([credorId, created_at])
 }
 
-// v3.0: HISTÓRICO DE MÍNIMOS GARANTIDOS
-model HistoricoMinimo {
-  id           String   @id @default(cuid())
-  credorId     String
-  numero_pgc   String
-  empresa      String
-  valor_minimo Decimal  @db.Decimal(18, 2)
-  valor_bruto  Decimal  @db.Decimal(18, 2)
-  valor_total  Decimal  @db.Decimal(18, 2)
-  created_at   DateTime @default(now())
-
-  credor Credor @relation(fields: [credorId], references: [id], onDelete: Cascade)
-
-  @@index([credorId, numero_pgc])
-}
 
 // v3.0: INTELIGÊNCIA DE LAYOUT DINÂMICO
 model ConfiguracaoLayout {

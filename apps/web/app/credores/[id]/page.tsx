@@ -79,14 +79,6 @@ type DiscountHistoryRow = {
   carryover_anterior: number;
 };
 
-type MinimoHistoryRow = {
-  id: string;
-  pgc: string;
-  empresa: string;
-  valor_minimo: number;
-  valor_bruto: number;
-  valor_total: number;
-};
 
 export default function CredorDetailPage({ params }: { params: { id: string } }) {
   const [openFolderMessage, setOpenFolderMessage] = useState('');
@@ -94,8 +86,6 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
   const [discountPgcFilter, setDiscountPgcFilter] = useState('all');
   const [discountEmpresaFilter, setDiscountEmpresaFilter] = useState('all');
 
-  const [minimoPgcFilter, setMinimoPgcFilter] = useState('all');
-  const [minimoEmpresaFilter, setMinimoEmpresaFilter] = useState('all');
 
   const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
   const [emailModalLoading, setEmailModalLoading] = useState(false);
@@ -103,7 +93,6 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
   const [emailModalMessage, setEmailModalMessage] = useState('');
   const [emailTemplateDraft, setEmailTemplateDraft] = useState({
     mensagem_principal: '',
-    texto_minimo: '',
     texto_descontos: '',
   });
 
@@ -188,37 +177,6 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
     });
   }, [descontoHistoricoRows, discountPgcFilter, discountEmpresaFilter]);
 
-  const minimoHistoricoRows = useMemo(() => {
-    if (!credor) return [] as MinimoHistoryRow[];
-    return ((credor.minimosHistorico ?? []) as any[]).map((row: any) => ({
-      id: String(row.id),
-      pgc: String(row.numero_pgc ?? '-'),
-      empresa: String(row.empresa ?? '-'),
-      valor_minimo: Number(row.valor_minimo ?? 0),
-      valor_bruto: Number(row.valor_bruto ?? 0),
-      valor_total: Number(row.valor_total ?? 0),
-    })).sort((a, b) => parsePgcToSortKey(b.pgc) - parsePgcToSortKey(a.pgc));
-  }, [credor]);
-
-  const minimoPgcOptions = useMemo<string[]>(() => {
-    const values = Array.from(new Set(minimoHistoricoRows.map((row) => row.pgc)));
-    values.sort((a, b) => parsePgcToSortKey(b) - parsePgcToSortKey(a));
-    return values;
-  }, [minimoHistoricoRows]);
-
-  const minimoEmpresaOptions = useMemo<string[]>(() => {
-    const values = Array.from(new Set(minimoHistoricoRows.map((row) => row.empresa)));
-    values.sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
-    return values;
-  }, [minimoHistoricoRows]);
-
-  const filteredMinimoHistoricoRows = useMemo(() => {
-    return minimoHistoricoRows.filter((row) => {
-      const matchPgc = minimoPgcFilter === 'all' || row.pgc === minimoPgcFilter;
-      const matchEmpresa = minimoEmpresaFilter === 'all' || row.empresa === minimoEmpresaFilter;
-      return matchPgc && matchEmpresa;
-    });
-  }, [minimoHistoricoRows, minimoPgcFilter, minimoEmpresaFilter]);
 
   const chartData = useMemo(() => {
     if (!credor) return [] as Array<{ x: string; y: number }>;
@@ -519,68 +477,6 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
             </SectionCard>
           </section>
 
-          <section style={{ marginTop: 16 }}>
-            <SectionCard
-              badge="Mínimo"
-              title="Histórico de Mínimo Garantido"
-              tone="accent"
-              actions={
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  <select
-                    value={minimoPgcFilter}
-                    onChange={(e) => setMinimoPgcFilter(e.target.value)}
-                    style={{ minWidth: 130 }}
-                  >
-                    <option value="all">Todos os PGCs</option>
-                    {minimoPgcOptions.map((pgc) => (
-                      <option key={pgc} value={pgc}>{`PGC ${pgc}`}</option>
-                    ))}
-                  </select>
-                  <select
-                    value={minimoEmpresaFilter}
-                    onChange={(e) => setMinimoEmpresaFilter(e.target.value)}
-                    style={{ minWidth: 260 }}
-                  >
-                    <option value="all">Todas as empresas</option>
-                    {minimoEmpresaOptions.map((empresa) => (
-                      <option key={empresa} value={empresa}>{empresa}</option>
-                    ))}
-                  </select>
-                </div>
-              }
-            >
-              <DataTable>
-                <thead>
-                  <tr>
-                    <th>PGC</th>
-                    <th>Empresa</th>
-                    <th>Valor Bruto (AL)</th>
-                    <th>Valor Mínimo (AO)</th>
-                    <th>Total Acordado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredMinimoHistoricoRows.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} style={{ color: 'var(--muted)' }}>
-                        Sem histórico de mínimos para este credor.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredMinimoHistoricoRows.map((row: MinimoHistoryRow) => (
-                      <tr key={row.id}>
-                        <td><strong>PGC {row.pgc}</strong></td>
-                        <td>{row.empresa}</td>
-                        <td>{`R$ ${toCurrency(row.valor_bruto)}`}</td>
-                        <td>{`R$ ${toCurrency(row.valor_minimo)}`}</td>
-                        <td>{`R$ ${toCurrency(row.valor_total)}`}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </DataTable>
-            </SectionCard>
-          </section>
 
           {isEmailModalOpen ? (
             <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Enviar e-mail do credor" onClick={() => setIsEmailModalOpen(false)}>
@@ -607,19 +503,6 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
                           }))
                         }
                         style={{ minHeight: 200 }}
-                      />
-                    </label>
-                    <label>
-                      Texto mínimo
-                      <textarea
-                        rows={3}
-                        value={emailTemplateDraft.texto_minimo}
-                        onChange={(e) =>
-                          setEmailTemplateDraft((prev) => ({
-                            ...prev,
-                            texto_minimo: e.target.value,
-                          }))
-                        }
                       />
                     </label>
                     <label>

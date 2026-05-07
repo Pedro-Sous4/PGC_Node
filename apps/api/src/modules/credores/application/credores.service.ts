@@ -266,12 +266,6 @@ export class CredoresService {
       };
     }
 
-    if (query.hasMinimo !== undefined) {
-      where = {
-        ...where,
-        minimosHistorico: query.hasMinimo ? { some: {} } : { none: {} },
-      };
-    }
 
     if (query.hasDesconto !== undefined) {
       where = {
@@ -299,9 +293,6 @@ export class CredoresService {
             },
             orderBy: { created_at: 'desc' },
           },
-          minimosHistorico: {
-            orderBy: { created_at: 'desc' },
-          },
           eventosFinanceiros: {
             where: { tipo: 'ABATIMENTO_PGC' },
             orderBy: { created_at: 'desc' },
@@ -323,13 +314,6 @@ export class CredoresService {
 
       const latestPgcNum = allPgcs.length > 0 ? allPgcs[0].num : -1;
 
-      // Valores do último PGC
-      // Busca no histórico de mínimos o registro que coincida com o maior PGC encontrado
-      const latestMinimoRow = item.minimosHistorico.find((m) => {
-        const mPgcNum = Number(String(m.numero_pgc ?? '').replace(/\D/g, ''));
-        return mPgcNum === latestPgcNum;
-      });
-      const ultimo_minimo = latestMinimoRow ? Number(latestMinimoRow.valor_minimo) : 0;
 
       // Busca nos eventos financeiros a soma de abatimentos do maior PGC encontrado
       const ultimo_desconto = item.eventosFinanceiros
@@ -358,7 +342,6 @@ export class CredoresService {
         grupo: item.grupo,
         valor_total: valorTotal,
         valor_pgc: valorPgc,
-        ultimo_minimo,
         ultimo_desconto,
       };
     });
@@ -411,12 +394,8 @@ export class CredoresService {
 
     if (!credor) throw new NotFoundException('Credor nao encontrado.');
 
-    const [descontos_historico, minimos_historico_raw] = await Promise.all([
+    const [descontos_historico] = await Promise.all([
       this.loadDiscountHistoryRowsForCredor(credor.id),
-      this.prisma.historicoMinimo.findMany({
-        where: { credorId: credor.id },
-        orderBy: { created_at: 'desc' },
-      }),
     ]);
 
     const total = credor.rendimentos.reduce((acc, item) => acc + Number(item.valor), 0);
@@ -449,15 +428,6 @@ export class CredoresService {
     return {
       ...credor,
       descontos_historico,
-      minimosHistorico: minimos_historico_raw.map((m) => ({
-        id: m.id,
-        pgc: m.numero_pgc,
-        empresa: m.empresa,
-        valor_minimo: Number(m.valor_minimo),
-        valor_bruto: Number(m.valor_bruto),
-        valor_total: Number(m.valor_total),
-        created_at: m.created_at,
-      })),
       resumo: {
         total,
         media,

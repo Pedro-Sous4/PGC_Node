@@ -40,13 +40,6 @@ export class ListCredoresQueryDto {
   @IsString()
   numero_pgc?: string;
 
-  @IsOptional()
-  @Transform(({ value }) => {
-    if (value === 'sim' || value === 'true' || value === true) return true;
-    if (value === 'nao' || value === 'false' || value === false) return false;
-    return undefined;
-  })
-  hasMinimo?: boolean;
 
   @IsOptional()
   @Transform(({ value }) => {

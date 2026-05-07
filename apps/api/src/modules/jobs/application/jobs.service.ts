@@ -530,6 +530,14 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           });
 
           if (dto.credorUpdate.discountHistory && dto.credorUpdate.discountHistory.length > 0) {
+            // Limpa eventos financeiros anteriores para este PGC/Credor antes de persistir novo (evita duplicidade em re-runs)
+            await this.prisma.eventoFinanceiro.deleteMany({
+              where: {
+                credorId: credor.id,
+                numero_pgc: dto.credorUpdate.numeroPgc,
+              },
+            });
+
             for (const entry of dto.credorUpdate.discountHistory) {
               await this.carryoverService.registrarTransacao({
                 credorId: credor.id,
@@ -543,29 +551,6 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          if (dto.credorUpdate.minimoHistory && dto.credorUpdate.minimoHistory.length > 0) {
-            // Limpa histórico de mínimo anterior para este PGC/Credor antes de persistir novo (evita duplicidade em re-runs)
-            await this.prisma.historicoMinimo.deleteMany({
-              where: {
-                credorId: credor.id,
-                numero_pgc: dto.credorUpdate.numeroPgc,
-              },
-            });
-
-            for (const entry of dto.credorUpdate.minimoHistory) {
-              await this.prisma.historicoMinimo.create({
-                data: {
-                  credorId: credor.id,
-                  numero_pgc: dto.credorUpdate.numeroPgc || '-',
-                  empresa: entry.empresa,
-                  valor_minimo: new Prisma.Decimal(entry.valorMinimo),
-                  valor_bruto: new Prisma.Decimal(entry.valorBruto),
-                  valor_total: new Prisma.Decimal(entry.valorTotal),
-                },
-              });
-            }
-
-          }
         } catch (err) {
           console.error(`[JobsService] Error updating credor ${dto.credorUpdate.credorSlug}:`, err);
         }
