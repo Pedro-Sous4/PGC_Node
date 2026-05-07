@@ -93,7 +93,7 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
   const [periodFilter, setPeriodFilter] = useState('all');
   const [discountPgcFilter, setDiscountPgcFilter] = useState('all');
   const [discountEmpresaFilter, setDiscountEmpresaFilter] = useState('all');
-  
+
   const [minimoPgcFilter, setMinimoPgcFilter] = useState('all');
   const [minimoEmpresaFilter, setMinimoEmpresaFilter] = useState('all');
 
@@ -116,15 +116,15 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
 
   const historicoRows = useMemo(() => {
     if (!credor) return [] as Array<{ id: string; numeroPgc: string; periodo: string; evento: string }>;
-    
+
     // Deduplicação: Agrupa por número de PGC e mantém apenas um registro por PGC
     const uniqueMap = new Map<string, any>();
-    
+
     (credor.historicos ?? []).forEach((h: any) => {
       const numeroPgc = String(h.numero_pgc ?? '-');
       const periodoByRule = resolvePeriodoByGroupRule(credor.grupo?.nome, h.numero_pgc);
       const periodo = periodoByRule !== '-' ? periodoByRule : String(h.periodo ?? '-');
-      
+
       // Sempre sobrescreve com o último encontrado (que no array original costuma ser o mais recente dependendo da query)
       uniqueMap.set(numeroPgc, {
         id: String(h.id),
@@ -225,13 +225,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
 
     // Deduplicação de rendimentos para o gráfico
     const uniqueMap = new Map<string, { x: string; y: number }>();
-    
+
     (credor.rendimentos ?? []).forEach((r: any) => {
       const numeroPgc = String(r.numero_pgc ?? '-');
       const periodoRegra = resolvePeriodoByGroupRule(credor.grupo?.nome, r.numero_pgc);
       const periodoFinal = periodoRegra !== '-' ? periodoRegra : String(r.referencia ?? '-');
       const label = compactLabel(periodoFinal, numeroPgc);
-      
+
       uniqueMap.set(label, {
         x: label,
         y: Number(r.valor ?? 0),
@@ -407,16 +407,16 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
                     const relatedValue =
                       chartData.find((c: { x: string; y: number }) => c.x.includes(`PGC ${h.numeroPgc}`) && c.x.includes(h.periodo))?.y ?? null;
                     return (
-                    <tr key={h.id}>
-                      <td><strong>PGC {h.numeroPgc}</strong></td>
-                      <td>{formatPeriodo(h.periodo)}</td>
-                      <td>{relatedValue === null ? '-' : `R$ ${toCurrency(relatedValue)}`}</td>
-                      <td><span className="status-pill success">Pago</span></td>
-                      <td>
-                        <ActionButton type="button" variant="secondary" onClick={() => handleOpenFolder(h.numeroPgc)} label="Arquivos" />
-                      </td>
-                    </tr>
-                  );
+                      <tr key={h.id}>
+                        <td><strong>PGC {h.numeroPgc}</strong></td>
+                        <td>{formatPeriodo(h.periodo)}</td>
+                        <td>{relatedValue === null ? '-' : `R$ ${toCurrency(relatedValue)}`}</td>
+                        <td><span className="status-pill success">Pago</span></td>
+                        <td>
+                          <ActionButton type="button" variant="secondary" onClick={() => handleOpenFolder(h.numeroPgc)} label="Arquivos" />
+                        </td>
+                      </tr>
+                    );
                   })}
                 </tbody>
               </DataTable>

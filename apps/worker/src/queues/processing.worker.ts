@@ -1025,24 +1025,7 @@ function deriveMinimoRecords(
   cnpjFallback: Map<string, string>,
   companyMap: Map<string, CompanyIdentity>,
 ): MinimoRecord[] {
-<<<<<<< HEAD
   return derivePgcMasterRecords(worksheet, cnpjFallback, companyMap);
-=======
-  const golden = deriveMinimoRecordsFromGoldenFixedLayout(worksheet, cnpjFallback, empresaCnpjMap);
-  if (golden.length > 0) return golden;
-
-  const legacy = deriveMinimoRecordsFromLegacyLayout(worksheet, cnpjFallback, empresaCnpjMap);
-  const pivot = deriveMinimoRecordsFromPivotLayout(worksheet, cnpjFallback, empresaCnpjMap);
-
-  const legacyHasExplicitDiscount = legacy.some((row) => Number(row.desconto ?? 0) > 0);
-  if (legacyHasExplicitDiscount) return legacy;
-
-  if (pivot.length > 0 && legacy.length === 0) return pivot;
-
-  if (legacy.length > 0) return legacy;
-
-  return pivot;
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
 }
 
 function filterByCredor(records: RowRecord[], credorColumn: string | undefined, credorSlug: string): RowRecord[] {

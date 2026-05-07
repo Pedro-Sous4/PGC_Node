@@ -33,11 +33,7 @@ export type SystemSettings = {
   };
   empresasCnpj: Array<{
     empresa: string;
-<<<<<<< HEAD
     apelido?: string;
-=======
-    apelido: string;
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     cnpj: string;
   }>;
   audit: {
@@ -132,11 +128,7 @@ export class SystemSettingsService {
           ? parsed.empresasCnpj
               .map((item) => ({
                 empresa: String((item as { empresa?: string }).empresa ?? '').trim(),
-<<<<<<< HEAD
                 apelido: (item as { apelido?: string }).apelido?.trim(),
-=======
-                apelido: String((item as { apelido?: string }).apelido ?? '').trim(),
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
                 cnpj: String((item as { cnpj?: string }).cnpj ?? '').trim(),
               }))
               .filter((item) => item.empresa || item.cnpj)
@@ -185,11 +177,7 @@ export class SystemSettingsService {
       ? dto.empresasCnpj
           .map((item) => ({
             empresa: String(item?.empresa ?? '').trim(),
-<<<<<<< HEAD
             apelido: item?.apelido?.trim(),
-=======
-            apelido: String(item?.apelido ?? '').trim(),
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
             cnpj: String(item?.cnpj ?? '').trim(),
           }))
           .filter((item) => item.empresa && item.cnpj)

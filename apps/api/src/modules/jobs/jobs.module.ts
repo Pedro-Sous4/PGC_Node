@@ -13,4 +13,4 @@ import { RedisLockService } from '../../infra/redis-lock.service';
   providers: [JobsService, JobStateStore, QueueService, PrismaService, RedisLockService],
   exports: [JobStateStore, JobsService],
 })
-export class JobsModule {}
+export class JobsModule { }

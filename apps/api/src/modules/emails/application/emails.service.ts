@@ -259,7 +259,7 @@ export class EmailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly systemSettingsService: SystemSettingsService,
-  ) {}
+  ) { }
 
   private createDispatchId(): string {
     return `dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -608,17 +608,7 @@ export class EmailsService {
       };
     }
 
-<<<<<<< HEAD
-    // Fallback de layout tabular clássico (indices fixos)
-=======
-    const rowsArray = XLSX.utils.sheet_to_json<Array<unknown>>(ws, {
-      header: 1,
-      raw: false,
-      defval: '',
-    });
-
     // Fallback de layout tabular clássico (Novo Padrão).
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     for (let i = 1; i < rowsArray.length; i += 1) {
       const row = rowsArray[i];
       const credor = textOf(row[32]); // AG
@@ -650,11 +640,7 @@ export class EmailsService {
       };
     }
 
-<<<<<<< HEAD
-    // Fallback Golden pivô
-=======
     // Fallback Golden pivô — regra AA PGC: credor AG (32), mínimo AO (40), empresa AP (41), cnpj AQ (42).
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
     const GOLDEN_START_ROW = 7;
     for (let i = GOLDEN_START_ROW; i < rowsArray.length; i += 1) {
       const row = rowsArray[i] ?? [];
@@ -1042,12 +1028,12 @@ export class EmailsService {
         orderBy: { created_at: 'desc' },
       });
 
-        const attachments = await this.resolveCredorAttachments(
-          credor.nomeExibivel,
-          numeroPgc,
-          pgcDir,
-          historico?.requestId,
-        );
+      const attachments = await this.resolveCredorAttachments(
+        credor.nomeExibivel,
+        numeroPgc,
+        pgcDir,
+        historico?.requestId,
+      );
 
       let log = await this.prisma.emailLog.create({
         data: {
@@ -1086,29 +1072,29 @@ export class EmailsService {
 
         const infoMinimo = includeMinimo
           ? (minimo.detalhes || []).map(m => {
-              const baseText = dto?.custom_texto_minimo || template.texto_minimo;
-              // Substitui "Mínimo garantido" (literal do template) pela descrição real se houver
-              const adjustedTemplate = m.descricao 
-                ? baseText.replace(/M[íi]nimo\s*garantido/i, m.descricao)
-                : baseText;
+            const baseText = dto?.custom_texto_minimo || template.texto_minimo;
+            // Substitui "Mínimo garantido" (literal do template) pela descrição real se houver
+            const adjustedTemplate = m.descricao
+              ? baseText.replace(/M[íi]nimo\s*garantido/i, m.descricao)
+              : baseText;
 
-              return applyTemplate(adjustedTemplate, {
-                'minimo.valor': m.valor,
-                'minimo.empresa': m.empresa,
-                'minimo.cnpj': m.cnpj,
-                valor_formatado: m.valor,
-                empresa: m.empresa,
-                cnpj: m.cnpj,
-                info_minimo: m.valor,
-              });
-            }).join('\n')
+            return applyTemplate(adjustedTemplate, {
+              'minimo.valor': m.valor,
+              'minimo.empresa': m.empresa,
+              'minimo.cnpj': m.cnpj,
+              valor_formatado: m.valor,
+              empresa: m.empresa,
+              cnpj: m.cnpj,
+              info_minimo: m.valor,
+            });
+          }).join('\n')
           : '';
 
         const infoDescontos = includeDescontos
           ? applyTemplate(dto?.custom_texto_descontos || template.texto_descontos, {
-              linhas_descontos: descontosLines.join('\n'),
-              info_descontos: descontosLines.join('; '),
-            })
+            linhas_descontos: descontosLines.join('\n'),
+            info_descontos: descontosLines.join('; '),
+          })
           : '';
 
         const baseMensagem = isSports ? template.mensagem_laghetto_sports : template.mensagem_laghetto_golden;
@@ -1143,21 +1129,9 @@ export class EmailsService {
           'credor.nome': credor.nomeExibivel,
         });
 
-<<<<<<< HEAD
-        // AUDITORIA FINAL
-        const fsBody = require('fs');
-        const bodyLog = `\n--- [FINAL AUDIT] Credor: ${credor.nomeExibivel} ---\n` +
-                        `Body:\n${body}\n` +
-                        `--- [END AUDIT] ---\n`;
-        fsBody.appendFileSync('c:\\PGC_Node\\scripts\\test-validation.log', bodyLog);
+        const subject = subjectRaw;
+        const targetEmail = credor.email;
 
-        // ENVIO REAL: Utiliza o transportADOR SMTP configurado
-=======
-        // TRAVA DE SEGURANÇA PARA TESTES
-        const subject = `[MODO TESTE] ${subjectRaw} (Para: ${credor.email})`;
-        const targetEmail = 'pedroforoni@gmail.com';
-
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
         await transporter.sendMail({
           from: senderLabel,
           to: targetEmail,

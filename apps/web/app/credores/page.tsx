@@ -41,15 +41,15 @@ export default function CredoresPage() {
   const gruposQuery = useQuery({ queryKey: ['grupos'], queryFn: listGrupos });
   const credoresQuery = useQuery({
     queryKey: ['credores', nome, grupoId, enviado, numeroPgc, hasMinimo, hasDesconto, currentPage],
-    queryFn: () => listCredores({ 
-      nome, 
-      grupoId, 
-      enviado, 
-      numero_pgc: numeroPgc, 
+    queryFn: () => listCredores({
+      nome,
+      grupoId,
+      enviado,
+      numero_pgc: numeroPgc,
       hasMinimo,
       hasDesconto,
-      skip: currentPage * PAGE_SIZE, 
-      take: PAGE_SIZE 
+      skip: currentPage * PAGE_SIZE,
+      take: PAGE_SIZE
     }),
   });
 
@@ -244,60 +244,60 @@ export default function CredoresPage() {
         </div>
 
         <DataTable>
-            <thead>
-              <tr>
-                <th>
-                  <input
-                    type="checkbox"
-                    checked={allSelected}
-                    onChange={(e) => setSelected(e.target.checked ? displayedRows.map((r) => r.id) : [])}
-                    style={{ width: 14, height: 14 }}
-                  />
-                </th>
-                <th>Nome</th>
-                <th>Email</th>
-                <th>PGC</th>
-                <th>Mínimo</th>
-                <th>Desconto</th>
-                <th>Valor PGC</th>
-                <th>Status</th>
-                <th>Grupo</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayedRows.map((row) => {
-                const checked = selected.includes(row.id);
-                return (
-                  <tr key={row.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => setSelected((prev) => e.target.checked ? [...prev, row.id] : prev.filter((id) => id !== row.id))}
-                        style={{ width: 14, height: 14 }}
-                      />
-                    </td>
-                    <td><strong>{row.nome}</strong></td>
-                    <td>{row.email}</td>
-                    <td><span className="chip secondary">PGC {row.numero_pgc || '-'}</span></td>
-                    <td>{row.ultimo_minimo > 0 ? `R$ ${row.ultimo_minimo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
-                    <td>{row.ultimo_desconto > 0 ? `R$ ${row.ultimo_desconto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
-                    <td><strong>R$ {row.valor_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></td>
-                    <td>
-                      <StatusBadge status={row.enviado ? 'Enviado' : 'Não enviado'} />
-                    </td>
-                    <td>{row.grupo?.nome ?? '-'}</td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <ActionButton type="button" variant="secondary" label="Editar" onClick={() => openEditModal(row)} />
-                        <Link className="link-action" href={`/credores/${row.id}`}>Detalhe</Link>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
+          <thead>
+            <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={(e) => setSelected(e.target.checked ? displayedRows.map((r) => r.id) : [])}
+                  style={{ width: 14, height: 14 }}
+                />
+              </th>
+              <th>Nome</th>
+              <th>Email</th>
+              <th>PGC</th>
+              <th>Mínimo</th>
+              <th>Desconto</th>
+              <th>Valor PGC</th>
+              <th>Status</th>
+              <th>Grupo</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayedRows.map((row) => {
+              const checked = selected.includes(row.id);
+              return (
+                <tr key={row.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={(e) => setSelected((prev) => e.target.checked ? [...prev, row.id] : prev.filter((id) => id !== row.id))}
+                      style={{ width: 14, height: 14 }}
+                    />
+                  </td>
+                  <td><strong>{row.nome}</strong></td>
+                  <td>{row.email}</td>
+                  <td><span className="chip secondary">PGC {row.numero_pgc || '-'}</span></td>
+                  <td>{row.ultimo_minimo > 0 ? `R$ ${row.ultimo_minimo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  <td>{row.ultimo_desconto > 0 ? `R$ ${row.ultimo_desconto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                  <td><strong>R$ {row.valor_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></td>
+                  <td>
+                    <StatusBadge status={row.enviado ? 'Enviado' : 'Não enviado'} />
+                  </td>
+                  <td>{row.grupo?.nome ?? '-'}</td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <ActionButton type="button" variant="secondary" label="Editar" onClick={() => openEditModal(row)} />
+                      <Link className="link-action" href={`/credores/${row.id}`}>Detalhe</Link>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
         </DataTable>
 
         {totalPages > 1 && (

@@ -8,10 +8,6 @@ class EmpresaCnpjItemDto {
 
   @IsOptional()
   @IsString()
-<<<<<<< HEAD
-  @MinLength(2)
-=======
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
   apelido?: string;
 
   @IsOptional()
