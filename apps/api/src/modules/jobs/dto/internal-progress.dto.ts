@@ -17,6 +17,37 @@ class ErrorDto {
   technicalDetail?: string;
 }
 
+class DiscountHistoryEntryDto {
+  @IsString()
+  empresa!: string;
+
+  @IsNumber()
+  descontoAtual!: number;
+
+  @IsNumber()
+  carryoverAnterior!: number;
+
+  @IsNumber()
+  aplicadoNoPgc!: number;
+
+  @IsNumber()
+  saldoProximoPgc!: number;
+}
+
+class MinimoHistoryEntryDto {
+  @IsString()
+  empresa!: string;
+
+  @IsNumber()
+  valorMinimo!: number;
+
+  @IsNumber()
+  valorBruto!: number;
+
+  @IsNumber()
+  valorTotal!: number;
+}
+
 class CredorUpdateDto {
   @IsString()
   credorSlug!: string;
@@ -47,6 +78,18 @@ class CredorUpdateDto {
   @IsOptional()
   @IsString()
   warning?: string;
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DiscountHistoryEntryDto)
+  discountHistory?: DiscountHistoryEntryDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MinimoHistoryEntryDto)
+  minimoHistory?: MinimoHistoryEntryDto[];
 }
 
 class ArtifactDto {

@@ -71,6 +71,8 @@ export interface CredorRow {
   grupo?: Grupo;
   valor_total: number;
   valor_pgc: number;
+  ultimo_minimo: number;
+  ultimo_desconto: number;
 }
 
 export interface JobState {
@@ -234,6 +236,8 @@ export async function listCredores(params: {
   grupoId?: string;
   enviado?: string;
   numero_pgc?: string;
+  hasMinimo?: string;
+  hasDesconto?: string;
   skip?: number;
   take?: number;
 }): Promise<{ data: CredorRow[]; page: { skip: number; take: number; total: number } }> {
@@ -242,6 +246,8 @@ export async function listCredores(params: {
   if (params.grupoId) query.set('grupoId', params.grupoId);
   if (params.enviado === 'true' || params.enviado === 'false') query.set('enviado', params.enviado);
   if (params.numero_pgc) query.set('numero_pgc', params.numero_pgc);
+  if (params.hasMinimo) query.set('hasMinimo', params.hasMinimo);
+  if (params.hasDesconto) query.set('hasDesconto', params.hasDesconto);
   query.set('skip', String(params.skip ?? 0));
   query.set('take', String(params.take ?? 20));
 

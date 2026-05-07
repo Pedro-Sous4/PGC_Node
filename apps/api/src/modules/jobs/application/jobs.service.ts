@@ -9,6 +9,7 @@ import { QueueService } from '../infra/queue.service';
 import { JobStateStore } from './job-state.store';
 import { PrismaService } from '../../../infra/prisma.service';
 import { RedisLockService } from '../../../infra/redis-lock.service';
+import { CarryoverService } from '../../credores/application/carryover.service';
 
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
@@ -19,6 +20,7 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     private readonly queueService: QueueService,
     private readonly prisma: PrismaService,
     private readonly lockService: RedisLockService,
+    private readonly carryoverService: CarryoverService,
   ) {}
 
   onModuleInit(): void {
@@ -379,81 +381,104 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (dto.credorUpdate) {
-        const flowForGrouping = dto.credorUpdate.flow ?? current?.source ?? undefined;
-        const credor = await this.ensureCredor(dto.credorUpdate.credorSlug, flowForGrouping);
-        const grupoId = await this.resolveGroupIdForFlow(flowForGrouping);
-        const credorWarning = dto.credorUpdate.warning?.trim() || null;
+        try {
+          const flowForGrouping = dto.credorUpdate.flow ?? current?.source ?? undefined;
+          const credor = await this.ensureCredor(dto.credorUpdate.credorSlug, flowForGrouping);
+          const grupoId = await this.resolveGroupIdForFlow(flowForGrouping);
+          const credorWarning = dto.credorUpdate.warning?.trim() || null;
 
-        if (dto.credorUpdate.state === ProcessingStatus.SUCCESS) {
-          const credorName = dto.credorUpdate.credorName?.trim();
-          const periodo = dto.credorUpdate.periodo?.trim();
-          const numeroPgc = dto.credorUpdate.numeroPgc?.trim();
-          const valorTotal = dto.credorUpdate.valorTotal;
+          if (dto.credorUpdate.state === ProcessingStatus.SUCCESS) {
+            const credorName = dto.credorUpdate.credorName?.trim();
+            const periodo = dto.credorUpdate.periodo?.trim();
+            const numeroPgc = dto.credorUpdate.numeroPgc?.trim();
+            const valorTotal = dto.credorUpdate.valorTotal;
 
-          if (credorName || periodo || grupoId) {
-            const nomeCanonico = credorName
-              ? credorName
-                  .normalize('NFD')
-                  .replace(/[\u0300-\u036f]/g, '')
-                  .toLowerCase()
-                  .trim()
-              : undefined;
+            if (credorName || periodo || grupoId) {
+              const nomeCanonico = credorName
+                ? credorName
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .toLowerCase()
+                    .trim()
+                : undefined;
 
-            await this.prisma.credor.update({
-              where: { id: credor.id },
-              data: {
-                nomeExibivel: credorName || undefined,
-                nomeCanonico: nomeCanonico || undefined,
-                periodo: periodo || undefined,
-                grupoId: grupoId ?? undefined,
-              },
-            });
-          }
-
-          if (numeroPgc && periodo && typeof valorTotal === 'number' && Number.isFinite(valorTotal) && valorTotal >= 0) {
-            const normalizedPgc = numeroPgc.trim().toLowerCase();
-            const normalizedPeriodo = periodo.trim().toLowerCase();
-
-            const existing = await this.prisma.rendimento.findFirst({
-              where: {
-                credorId: credor.id,
-                numero_pgc: { equals: normalizedPgc, mode: 'insensitive' },
-                referencia: { equals: normalizedPeriodo, mode: 'insensitive' },
-              },
-              select: { id: true },
-              orderBy: { created_at: 'desc' },
-            });
-
-            if (existing) {
-              await this.prisma.rendimento.update({
-                where: { id: existing.id },
-                data: { 
-                  valor: new Prisma.Decimal(valorTotal),
-                  updated_at: new Date()
+              await this.prisma.credor.update({
+                where: { id: credor.id },
+                data: {
+                  nomeExibivel: credorName || undefined,
+                  nomeCanonico: nomeCanonico || undefined,
+                  periodo: periodo || undefined,
+                  grupoId: grupoId ?? undefined,
                 },
               });
+            }
 
-              const hist = await this.prisma.historicoPGC.findFirst({
+            if (numeroPgc && periodo && typeof valorTotal === 'number' && Number.isFinite(valorTotal) && valorTotal >= 0) {
+              const normalizedPgc = numeroPgc.trim().toLowerCase();
+              const normalizedPeriodo = periodo.trim().toLowerCase();
+
+              const existing = await this.prisma.rendimento.findFirst({
                 where: {
                   credorId: credor.id,
-                  numero_pgc: normalizedPgc,
+                  numero_pgc: { equals: normalizedPgc, mode: 'insensitive' },
+                  referencia: { equals: normalizedPeriodo, mode: 'insensitive' },
                 },
-                select: { id: true }
+                select: { id: true },
+                orderBy: { created_at: 'desc' },
               });
 
-              if (hist) {
-                await this.prisma.historicoPGC.update({
-                  where: { id: hist.id },
+              if (existing) {
+                await this.prisma.rendimento.update({
+                  where: { id: existing.id },
                   data: { 
-                    valorTotal: new Prisma.Decimal(valorTotal),
-                    updated_at: new Date(),
-                    payload: {
-                      valorTotal,
-                      updatedAt: new Date().toISOString()
-                    }
-                  }
+                    valor: new Prisma.Decimal(valorTotal),
+                    updated_at: new Date()
+                  },
                 });
+
+                const hist = await this.prisma.historicoPGC.findFirst({
+                  where: {
+                    credorId: credor.id,
+                    numero_pgc: normalizedPgc,
+                  },
+                  select: { id: true }
+                });
+
+                if (hist) {
+                  await this.prisma.historicoPGC.update({
+                    where: { id: hist.id },
+                    data: { 
+                      valorTotal: new Prisma.Decimal(valorTotal),
+                      updated_at: new Date(),
+                      payload: {
+                        valorTotal,
+                        updatedAt: new Date().toISOString()
+                      }
+                    }
+                  });
+                } else {
+                  await this.prisma.historicoPGC.create({
+                    data: {
+                      requestId,
+                      credorId: credor.id,
+                      numero_pgc: normalizedPgc,
+                      periodo: normalizedPeriodo,
+                      valorTotal: new Prisma.Decimal(valorTotal),
+                      evento: 'PROCESSAMENTO_JOB',
+                      payload: { valorTotal }
+                    }
+                  });
+                }
               } else {
+                await this.prisma.rendimento.create({
+                  data: {
+                    credorId: credor.id,
+                    numero_pgc: normalizedPgc,
+                    referencia: normalizedPeriodo,
+                    valor: new Prisma.Decimal(valorTotal),
+                  },
+                });
+
                 await this.prisma.historicoPGC.create({
                   data: {
                     requestId,
@@ -463,30 +488,79 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
                     valorTotal: new Prisma.Decimal(valorTotal),
                     evento: 'PROCESSAMENTO_JOB',
                     payload: { valorTotal }
-                  }
+                  },
                 });
               }
-            } else {
-              await this.prisma.rendimento.create({
-                data: {
-                  credorId: credor.id,
-                  numero_pgc: normalizedPgc,
-                  referencia: normalizedPeriodo,
-                  periodo: normalizedPeriodo,
-                  valor: new Prisma.Decimal(valorTotal),
-                  requestId,
-                },
-              });
+            }
+          }
 
-              await this.prisma.historicoPGC.create({
+          await this.prisma.credorProcessingStatus.upsert({
+            where: {
+              processingJobId_credorId_stage: {
+                processingJobId: processingJob.id,
+                credorId: credor.id,
+                stage: dto.stage,
+              },
+            },
+            create: {
+              processingJobId: processingJob.id,
+              credorId: credor.id,
+              stage: dto.stage,
+              status: dto.credorUpdate.state,
+              warning:
+                dto.credorUpdate.state === ProcessingStatus.ERROR
+                  ? null
+                  : credorWarning,
+              errorMessage:
+                dto.credorUpdate.state === ProcessingStatus.ERROR
+                  ? 'Erro de processamento do credor'
+                  : null,
+            },
+            update: {
+              status: dto.credorUpdate.state,
+              warning:
+                dto.credorUpdate.state === ProcessingStatus.ERROR
+                  ? null
+                  : credorWarning,
+              errorMessage:
+                dto.credorUpdate.state === ProcessingStatus.ERROR
+                  ? 'Erro de processamento do credor'
+                  : null,
+            },
+          });
+
+          if (dto.credorUpdate.discountHistory && dto.credorUpdate.discountHistory.length > 0) {
+            for (const entry of dto.credorUpdate.discountHistory) {
+              await this.carryoverService.registrarTransacao({
+                credorId: credor.id,
+                empresa: entry.empresa,
+                valorOriginal: entry.descontoAtual + entry.carryoverAnterior,
+                valorAbatido: entry.aplicadoNoPgc,
+                requestId,
+                numero_pgc: dto.credorUpdate.numeroPgc,
+                observacao: `Processado via Job ${requestId} (PGC ${dto.credorUpdate.numeroPgc})`,
+              });
+            }
+          }
+
+          if (dto.credorUpdate.minimoHistory && dto.credorUpdate.minimoHistory.length > 0) {
+            // Limpa histórico de mínimo anterior para este PGC/Credor antes de persistir novo (evita duplicidade em re-runs)
+            await this.prisma.historicoMinimo.deleteMany({
+              where: {
+                credorId: credor.id,
+                numero_pgc: dto.credorUpdate.numeroPgc,
+              },
+            });
+
+            for (const entry of dto.credorUpdate.minimoHistory) {
+              await this.prisma.historicoMinimo.create({
                 data: {
-                  requestId,
                   credorId: credor.id,
-                  numero_pgc: normalizedPgc,
-                  periodo: normalizedPeriodo,
-                  valorTotal: new Prisma.Decimal(valorTotal),
-                  evento: 'PROCESSAMENTO_JOB',
-                  payload: { valorTotal }
+                  numero_pgc: dto.credorUpdate.numeroPgc || '-',
+                  empresa: entry.empresa,
+                  valor_minimo: new Prisma.Decimal(entry.valorMinimo),
+                  valor_bruto: new Prisma.Decimal(entry.valorBruto),
+                  valor_total: new Prisma.Decimal(entry.valorTotal),
                 },
               });
             }
@@ -515,43 +589,11 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
             });
 >>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
           }
+        } catch (err) {
+          console.error(`[JobsService] Error updating credor ${dto.credorUpdate.credorSlug}:`, err);
         }
-
-        await this.prisma.credorProcessingStatus.upsert({
-          where: {
-            processingJobId_credorId_stage: {
-              processingJobId: processingJob.id,
-              credorId: credor.id,
-              stage: dto.stage,
-            },
-          },
-          create: {
-            processingJobId: processingJob.id,
-            credorId: credor.id,
-            stage: dto.stage,
-            status: dto.credorUpdate.state,
-            warning:
-              dto.credorUpdate.state === ProcessingStatus.ERROR
-                ? null
-                : credorWarning,
-            errorMessage:
-              dto.credorUpdate.state === ProcessingStatus.ERROR
-                ? 'Erro de processamento do credor'
-                : null,
-          },
-          update: {
-            status: dto.credorUpdate.state,
-            warning:
-              dto.credorUpdate.state === ProcessingStatus.ERROR
-                ? null
-                : credorWarning,
-            errorMessage:
-              dto.credorUpdate.state === ProcessingStatus.ERROR
-                ? 'Erro de processamento do credor'
-                : null,
-          },
-        });
       }
+
 
       if (dto.appendError) {
         await this.prisma.processingError.create({

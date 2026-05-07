@@ -148,44 +148,89 @@ export class CredoresService {
         credorId,
         numero_pgc: { not: null }
       },
-      orderBy: { created_at: 'desc' },
+      orderBy: { created_at: 'asc' }, // Ordem cronológica para pegar o fluxo correto
     });
 
-    const dedupedRows: CredorDiscountHistoryRow[] = [];
-    const seen = new Set<string>();
+    const groups = new Map<string, {
+      id: string;
+      pgc: string;
+      empresa: string;
+      carryover: number;
+      novoSaldo: number;
+      totalAbatido: number;
+      totalAdquirido: number;
+      createdAt: Date;
+    }>();
 
     for (const evento of eventos) {
       if (!evento.numero_pgc) continue;
-      
-      // Chave única para mostrar o último evento de cada PGC/Empresa
       const key = `${evento.numero_pgc}::${normalizeEmpresaHistoryKey(evento.empresa)}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      const carryover = Number(evento.saldoAnterior);
-      const abatido = Number(evento.tipo === 'ABATIMENTO_PGC' ? evento.valor : 0);
-      const novoSaldo = Number(evento.saldoPosterior);
       
-      // Reconstruindo as propriedades para o frontend compatível
-      // Desconto total representa a dívida considerada no momento (carryover + nova)
-      // Como o saldoPosterior = carryover + variacao -> variacao = novoSaldo - carryover
-      // E variacao = descontoAtual + carryover - abatido.
-      // Essa aproximação foca no que o banco tem disponível:
-      const descontoTotal = carryover + abatido + (novoSaldo > carryover ? novoSaldo - carryover : 0);
+      const valor = Number(evento.valor);
+      const isAbatimento = evento.tipo === 'ABATIMENTO_PGC';
+      
+      if (!groups.has(key)) {
+        groups.set(key, {
+          id: evento.id,
+          pgc: evento.numero_pgc,
+          empresa: evento.empresa,
+          carryover: Number(evento.saldoAnterior),
+          novoSaldo: Number(evento.saldoPosterior),
+          totalAbatido: isAbatimento ? valor : 0,
+          totalAdquirido: !isAbatimento ? valor : 0,
+          createdAt: evento.created_at,
+        });
+      } else {
+        const g = groups.get(key)!;
+        g.novoSaldo = Number(evento.saldoPosterior);
+        if (isAbatimento) {
+          g.totalAbatido += valor;
+        } else {
+          g.totalAdquirido += valor;
+        }
+        // Mantemos o carryover do primeiro evento do grupo
+      }
+    }
+
+    const dedupedRows: CredorDiscountHistoryRow[] = [];
+    for (const g of groups.values()) {
+      // Desconto total = O maior valor entre o que existia/entrou e o que foi tratado (abatido + restante)
+      // Isso garante que mesmo descontos quitados na hora apareçam no total.
+      const descontoTotal = Math.max(g.carryover + g.totalAdquirido, g.totalAbatido + g.novoSaldo);
 
       dedupedRows.push({
-        id: evento.id,
-        pgc: evento.numero_pgc,
-        empresa: evento.empresa,
+        id: g.id,
+        pgc: g.pgc,
+        empresa: g.empresa,
         desconto_total: Number(descontoTotal.toFixed(2)),
-        desconto_aplicado: Number(abatido.toFixed(2)),
-        restante_proximo_pgc: Number(novoSaldo.toFixed(2)),
-        desconto_acumulado: Number(descontoTotal.toFixed(2)),
-        carryover_anterior: Number(carryover.toFixed(2)),
-        created_at: evento.created_at.toISOString(),
+        desconto_aplicado: Number(g.totalAbatido.toFixed(2)),
+        restante_proximo_pgc: Number(g.novoSaldo.toFixed(2)),
+        desconto_acumulado: 0,
+        carryover_anterior: Number(g.carryover.toFixed(2)),
+        created_at: g.createdAt.toISOString(),
       });
     }
 
+    // Ordenar para cálculo da somatória acumulada (mais antigo para o mais novo)
+    dedupedRows.sort((a, b) => {
+      const aPgc = Number(String(a.pgc).replace(/\D/g, ''));
+      const bPgc = Number(String(b.pgc).replace(/\D/g, ''));
+      if (Number.isFinite(aPgc) && Number.isFinite(bPgc) && aPgc !== bPgc) return aPgc - bPgc;
+      return String(a.created_at ?? '').localeCompare(String(b.created_at ?? ''));
+    });
+
+    // Calcula a somatória acumulada de descontos aplicados por empresa
+    const runningTotalByEmpresa = new Map<string, number>();
+    for (const row of dedupedRows) {
+      const key = normalizeEmpresaHistoryKey(row.empresa);
+      const previousTotal = runningTotalByEmpresa.get(key) || 0;
+      const currentTotal = Number((previousTotal + row.desconto_aplicado).toFixed(2));
+      
+      row.desconto_acumulado = currentTotal;
+      runningTotalByEmpresa.set(key, currentTotal);
+    }
+
+    // Re-ordenar para exibição (mais novo para o mais antigo)
     dedupedRows.sort((a, b) => {
       const aPgc = Number(String(a.pgc).replace(/\D/g, ''));
       const bPgc = Number(String(b.pgc).replace(/\D/g, ''));
@@ -200,8 +245,8 @@ export class CredoresService {
 
     // Filtro base
     let where: Prisma.CredorWhereInput = {
-      grupoId: query.grupoId ?? undefined,
-      periodo: query.periodo ?? undefined,
+      grupoId: query.grupoId || undefined,
+      periodo: query.periodo || undefined,
       enviado: query.enviado,
     };
 
@@ -218,6 +263,22 @@ export class CredoresService {
             numero_pgc: query.numero_pgc,
           },
         },
+      };
+    }
+
+    if (query.hasMinimo !== undefined) {
+      where = {
+        ...where,
+        minimosHistorico: query.hasMinimo ? { some: {} } : { none: {} },
+      };
+    }
+
+    if (query.hasDesconto !== undefined) {
+      where = {
+        ...where,
+        eventosFinanceiros: query.hasDesconto
+          ? { some: { tipo: 'ABATIMENTO_PGC', valor: { gt: 0 } } }
+          : { none: { tipo: 'ABATIMENTO_PGC', valor: { gt: 0 } } },
       };
     }
 
@@ -238,6 +299,13 @@ export class CredoresService {
             },
             orderBy: { created_at: 'desc' },
           },
+          minimosHistorico: {
+            orderBy: { created_at: 'desc' },
+          },
+          eventosFinanceiros: {
+            where: { tipo: 'ABATIMENTO_PGC' },
+            orderBy: { created_at: 'desc' },
+          },
         },
       }),
       this.prisma.credor.count({ where }),
@@ -249,14 +317,30 @@ export class CredoresService {
 
       // Identifica o maior número de PGC numérico entre todos os rendimentos do credor
       const allPgcs = item.rendimentos
-        .map(r => ({ pgc: r.numero_pgc, num: Number(String(r.numero_pgc ?? '').replace(/\D/g, '')) }))
-        .filter(p => !isNaN(p.num))
+        .map((r) => ({ pgc: r.numero_pgc, num: Number(String(r.numero_pgc ?? '').replace(/\D/g, '')) }))
+        .filter((p) => !isNaN(p.num))
         .sort((a, b) => b.num - a.num);
 
-      const latestNumericPgc = allPgcs[0]?.pgc;
+      const latestPgcNum = allPgcs.length > 0 ? allPgcs[0].num : -1;
+
+      // Valores do último PGC
+      // Busca no histórico de mínimos o registro que coincida com o maior PGC encontrado
+      const latestMinimoRow = item.minimosHistorico.find((m) => {
+        const mPgcNum = Number(String(m.numero_pgc ?? '').replace(/\D/g, ''));
+        return mPgcNum === latestPgcNum;
+      });
+      const ultimo_minimo = latestMinimoRow ? Number(latestMinimoRow.valor_minimo) : 0;
+
+      // Busca nos eventos financeiros a soma de abatimentos do maior PGC encontrado
+      const ultimo_desconto = item.eventosFinanceiros
+        .filter((e) => {
+          const ePgcNum = Number(String(e.numero_pgc ?? '').replace(/\D/g, ''));
+          return ePgcNum === latestPgcNum;
+        })
+        .reduce((acc, e) => acc + Number(e.valor), 0);
 
       // Calcula o Valor do PGC específico (ou do mais recente numérico)
-      const targetPgc = query.numero_pgc || latestNumericPgc || latestRendimento?.numero_pgc;
+      const targetPgc = query.numero_pgc || allPgcs[0]?.pgc || latestRendimento?.numero_pgc;
       const valorPgc = item.rendimentos
         .filter((r) => r.numero_pgc === targetPgc)
         .reduce((acc, r) => acc + Number(r.valor), 0);
@@ -274,11 +358,39 @@ export class CredoresService {
         grupo: item.grupo,
         valor_total: valorTotal,
         valor_pgc: valorPgc,
+        ultimo_minimo,
+        ultimo_desconto,
+      };
+    });
+
+    // Busca eventos de abatimento para os credores listados no PGC alvo
+    const pgcParaEventos = query.numero_pgc || data[0]?.numero_pgc;
+    const eventos = pgcParaEventos 
+      ? await this.prisma.eventoFinanceiro.findMany({
+          where: {
+            credorId: { in: items.map(i => i.id) },
+            numero_pgc: pgcParaEventos,
+            tipo: 'ABATIMENTO_PGC'
+          }
+        })
+      : [];
+
+    const abatimentosMap = new Map<string, number>();
+    for (const ev of eventos) {
+      const current = abatimentosMap.get(ev.credorId) || 0;
+      abatimentosMap.set(ev.credorId, current + Number(ev.valor));
+    }
+
+    const finalData = data.map(item => {
+      const abatimento = abatimentosMap.get(item.id) || 0;
+      return {
+        ...item,
+        valor_pgc: Number((item.valor_pgc - abatimento).toFixed(2))
       };
     });
 
     return {
-      data,
+      data: finalData,
       page: {
         skip: query.skip ?? 0,
         take: query.take ?? 20,
@@ -299,7 +411,13 @@ export class CredoresService {
 
     if (!credor) throw new NotFoundException('Credor nao encontrado.');
 
-    const descontos_historico = await this.loadDiscountHistoryRowsForCredor(credor.id);
+    const [descontos_historico, minimos_historico_raw] = await Promise.all([
+      this.loadDiscountHistoryRowsForCredor(credor.id),
+      this.prisma.historicoMinimo.findMany({
+        where: { credorId: credor.id },
+        orderBy: { created_at: 'desc' },
+      }),
+    ]);
 
     const total = credor.rendimentos.reduce((acc, item) => acc + Number(item.valor), 0);
     const quantidade_periodos = new Set(
@@ -310,7 +428,6 @@ export class CredoresService {
 
     const media = quantidade_periodos > 0 ? total / quantidade_periodos : 0;
 
-    // Calcula saldo devedor atual (soma do restante_proximo_pgc do PGC mais recente de cada empresa)
     const latestPgcMap = new Map<string, number>();
     for (const row of descontos_historico) {
       const pgcNum = Number(String(row.pgc).replace(/\D/g, '')) || 0;
@@ -332,15 +449,20 @@ export class CredoresService {
     return {
       ...credor,
       descontos_historico,
+      minimosHistorico: minimos_historico_raw.map((m) => ({
+        id: m.id,
+        pgc: m.numero_pgc,
+        empresa: m.empresa,
+        valor_minimo: Number(m.valor_minimo),
+        valor_bruto: Number(m.valor_bruto),
+        valor_total: Number(m.valor_total),
+        created_at: m.created_at,
+      })),
       resumo: {
         total,
         media,
-<<<<<<< HEAD
-        quantidade_periodos,
-=======
         saldo_devedor,
         quantidade_periodos: new Set(credor.rendimentos.map((item) => item.referencia)).size,
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
       },
     };
   }

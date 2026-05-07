@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../infra/prisma.service';
-import { Decimal } from '@prisma/client/runtime/library';
+import { Prisma } from '@prisma/client';
 
 export interface CarryoverTransaction {
   credorId: string;
@@ -48,19 +48,10 @@ export class CarryoverService {
       
       // Se valorAbatido > 0, estamos reduzindo a dívida.
       // Se valorOriginal > valorAbatido, a diferença vira novo saldo devedor (ou aumenta o existente).
-      const variacao = Number(tx.valorOriginal - tx.valorAbatido);
-      
-      // No fluxo de PGC: 
-      // Se eu devia 100 (saldoAnterior = 100)
-      // E processei uma linha de 20 (valorOriginal = 20)
-      // E abati 20 (valorAbatido = 20)
-      // A variação é 0. O saldo continua 100.
-      
-      // Mas a lógica do PGC_Node v3.0 trata o SaldoDevedor como a "Dívida Acumulada".
-      // Vamos simplificar: O motor de processamento decide o novo saldo e nós apenas persistimos a mudança.
-      
-      // Para fins de Event Sourcing puro, vamos registrar a intenção:
-      const novoSaldo = Number((saldoAnterior + variacao).toFixed(2));
+      // O valorOriginal recebido já contempla o Carryover + Novo Desconto.
+      // Portanto, o novo saldo devedor é simplesmente a diferença entre o total a descontar e o que foi de fato aplicado.
+      const novoSaldo = Number((tx.valorOriginal - tx.valorAbatido).toFixed(2));
+      const variacao = Number((novoSaldo - saldoAnterior).toFixed(2));
 
       // 2. Atualiza ou cria o registro de saldo atual
       await prisma.saldoDevedor.upsert({
@@ -81,8 +72,8 @@ export class CarryoverService {
           credorId: tx.credorId,
           tipo: tx.valorAbatido > 0 ? 'ABATIMENTO_PGC' : 'AQUISICAO_DIVIDA',
           valor: tx.valorAbatido > 0 ? tx.valorAbatido : variacao,
-          saldoAnterior: new Decimal(saldoAnterior),
-          saldoPosterior: new Decimal(novoSaldo),
+          saldoAnterior: new Prisma.Decimal(saldoAnterior),
+          saldoPosterior: new Prisma.Decimal(novoSaldo),
           empresa: tx.empresa,
           numero_pgc: tx.numero_pgc,
           requestId: tx.requestId,

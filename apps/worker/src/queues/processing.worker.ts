@@ -1455,36 +1455,18 @@ export function startProcessingWorker(): Worker {
       );
       const sheetNames = workbook.SheetNames;
 
-<<<<<<< HEAD
-      const pgcSheetName = findSheetName(sheetNames, /^PGC/i);
-=======
       const isNotRetencao = (name: string) => !normalizeText(name).includes('retencao');
 
       const pgcSheetName =
         sheetNames.find((n) => /\bpgc\b/.test(normalizeText(n)) && isNotRetencao(n)) ??
         sheetNames.find((n) => /principal|base\s*pgc/.test(normalizeText(n)) && isNotRetencao(n));
 
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
       if (!pgcSheetName) {
         throw new Error('PGC_SHEET_NOT_FOUND (Aba que inicia com "PGC" nao encontrada)');
       }
 
-<<<<<<< HEAD
-      const baseDetailedSheetName = findSheetName(sheetNames, /^BASE\s*PGC/i);
-      if (!baseDetailedSheetName) {
-        // Fallback para "Base" se for o layout antigo, mas avisar.
-        const fallback = findSheetName(sheetNames, /\bbase\b/);
-        if (fallback) {
-          console.warn(`Usando aba ${fallback} como detalhamento (BASE PGC nao encontrada)`);
-        }
-      }
-
-      const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
-      const baseSheetName = baseDetailedSheetName || findSheetName(sheetNames, /\bbase\b/);
-      
-=======
       const baseSheetName = sheetNames.find((n) => /\bbase\b/.test(normalizeText(n)) && isNotRetencao(n));
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
+      const numeroPgc = extractPgcNumber(pgcSheetName, workbookFileName);
       if (!baseSheetName) {
         throw new Error('DETAILED_BASE_SHEET_NOT_FOUND (Aba BASE PGC nao encontrada)');
       }
@@ -1543,7 +1525,16 @@ export function startProcessingWorker(): Worker {
           ),
       );
 
-          const discountHistoryState = await loadDiscountHistoryState(flow);
+      // Regra Laghetto Sports: Não existe mínimo nem desconto.
+      if (flow === 'laghetto-sports') {
+        for (const row of minimoRecords) {
+          row.minimo = 0;
+          row.desconto = 0;
+          row.total = row.valorBruto;
+        }
+      }
+
+      const discountHistoryState = await loadDiscountHistoryState(flow);
 
       const baseValorColumn = detectColumn(baseSheet.headers, [
         /valor\s*original/,
@@ -1638,14 +1629,28 @@ export function startProcessingWorker(): Worker {
             credorSlug,
           );
           const minimoRowsRaw = filterMinimoByCredor(minimoRecords, credorSlug);
+
+          // Regra Laghetto Sports: Não existe mínimo nem desconto.
+          if (flow === 'laghetto-sports') {
+            for (const row of minimoRowsRaw) {
+              row.minimo = 0;
+              row.desconto = 0;
+              row.total = row.valorBruto;
+            }
+          }
           const { adjustedRows: minimoRows, ledger: descontosRows } = applyDiscountsForCredor(
             credorSlug,
             minimoRowsRaw,
-            discountHistoryState,
+            flow === 'laghetto-sports' ? new Map() : discountHistoryState, // No carryover for Sports
             baseRows,
             baseSheet.headers,
             companyMap,
           );
+
+          // O valor brutoEPgcMinimo e totalDescontosAplicados devem ser calculados aqui.
+          // Eles foram perdidos em uma edição anterior.
+          const brutoEPgcMinimo = minimoRows.reduce((acc, r) => acc + (r.total || 0), 0);
+          const totalDescontosAplicados = minimoRows.reduce((acc, r) => acc + (r.desconto || 0), 0);
 
           await appendDiscountHistoryLog(
             flow,
@@ -1663,10 +1668,9 @@ export function startProcessingWorker(): Worker {
             })),
           );
 
-          // Cálculo do Valor Líquido para o Dashboard (Bruto + Mínimo - Descontos Efetivamente Aplicados)
-          const brutoEPgcMinimo = minimoRows.reduce((acc, row) => acc + (row.total || 0), 0);
-          const totalDescontosAplicados = descontosRows.reduce((acc, row) => acc + (row.aplicadoNoPgc || 0), 0);
-          const valorTotalCredor = Number((brutoEPgcMinimo - totalDescontosAplicados).toFixed(2));
+          // O valor brutoEPgcMinimo já é a soma de row.total, que foi ajustado dentro de applyDiscountsForCredor
+          // (row.total = (bruto + minimo) - desconto). Subtrair totalDescontosAplicados novamente causaria duplicidade.
+          const valorTotalCredor = Number(brutoEPgcMinimo.toFixed(2));
           
           // Debug para auditoria da Ludmilla e Clemar
           if (credorSlug === 'clemar-de-souza' || credorSlug === 'ludmilla-rosa-moreira-de-souza') {
@@ -1780,9 +1784,23 @@ export function startProcessingWorker(): Worker {
               valorTotal: Number(valorTotalCredor.toFixed(2)),
               flow,
               warning: produtividadeMissingWarning,
+              discountHistory: descontosRows.map((entry) => ({
+                empresa: entry.empresa,
+                descontoAtual: entry.descontoAtual,
+                carryoverAnterior: entry.carryoverAnterior,
+                aplicadoNoPgc: entry.aplicadoNoPgc,
+                saldoProximoPgc: entry.saldoProximoPgc,
+              })),
+              minimoHistory: minimoRows.map((row) => ({
+                empresa: row.empresa,
+                valorMinimo: row.minimo,
+                valorBruto: row.valorBruto,
+                valorTotal: row.total,
+              })),
             },
           });
         } catch (error) {
+          console.error(`[Worker] Erro processando credor ${credorSlug} no fluxo ${flow}:`, error);
           errorCount += 1;
           const message = (error as Error).message;
           const code = message.includes('TIMEOUT')

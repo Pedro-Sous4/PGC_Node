@@ -7,11 +7,14 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('🚀 Iniciando limpeza profunda do banco de dados (JS)...');
 
-  // Tabelas para limpar (ordem dependente)
+  // Tabelas para limpar (ordem dependente de chaves estrangeiras)
   const tables = [
     'emailLog',
     'historicoPGC',
     'rendimento',
+    'saldoDevedor',
+    'eventoFinanceiro',
+    'historicoMinimo',
     'credorProcessingStatus',
     'processingError',
     'processingStep',
@@ -19,7 +22,11 @@ async function main() {
     'reprocessItem',
     'reprocessJob',
     'processingJob',
+    'configuracaoLayout',
     'credor',
+    'grupo',
+    'empresaPagadora',
+    'passwordResetToken'
   ];
 
   for (const table of tables) {

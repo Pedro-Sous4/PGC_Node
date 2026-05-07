@@ -39,6 +39,7 @@ model Credor {
   statuses CredorProcessingStatus[]
   saldos   SaldoDevedor[]
   eventosFinanceiros EventoFinanceiro[]
+  minimosHistorico   HistoricoMinimo[]
 
   @@index([grupoId])
   @@index([enviado])
@@ -213,7 +214,7 @@ model ReprocessJob {
   requestId  String
   status     ProcessingStatus @default(PENDING)
   created_at DateTime         @default(now())
-  updated_at DateTime         @updatedAt
+  updated_at DateTime @updatedAt
 
   items ReprocessItem[]
 
@@ -226,7 +227,7 @@ model ReprocessItem {
   credorSlug     String
   status         ProcessingStatus @default(PENDING)
   created_at     DateTime         @default(now())
-  updated_at     DateTime         @updatedAt
+  updated_at     DateTime @updatedAt
 
   reprocessJob ReprocessJob @relation(fields: [reprocessJobId], references: [id], onDelete: Cascade)
 
@@ -242,7 +243,6 @@ enum Role {
 model AppUser {
   id             String    @id @default(cuid())
   nome           String
-<<<<<<< HEAD
   email          String    @unique
   passwordHash   String?   // Opcional para logins sociais
   role           Role      @default(CONSULTA)
@@ -251,14 +251,6 @@ model AppUser {
   providerId     String?
   created_at     DateTime  @default(now())
   updated_at     DateTime  @updatedAt
-=======
-  email          String   @unique
-  passwordHash   String
-  role           Role     @default(USER)
-  active         Boolean  @default(true)
-  created_at     DateTime @default(now())
-  updated_at     DateTime @updatedAt
->>>>>>> c4b5202 (chore: save state before local backup. Fixed sheet detection and DB sync.)
   last_login_at  DateTime?
 
   resetTokens    PasswordResetToken[]
@@ -310,6 +302,22 @@ model EventoFinanceiro {
   @@index([credorId, created_at])
 }
 
+// v3.0: HISTÓRICO DE MÍNIMOS GARANTIDOS
+model HistoricoMinimo {
+  id           String   @id @default(cuid())
+  credorId     String
+  numero_pgc   String
+  empresa      String
+  valor_minimo Decimal  @db.Decimal(18, 2)
+  valor_bruto  Decimal  @db.Decimal(18, 2)
+  valor_total  Decimal  @db.Decimal(18, 2)
+  created_at   DateTime @default(now())
+
+  credor Credor @relation(fields: [credorId], references: [id], onDelete: Cascade)
+
+  @@index([credorId, numero_pgc])
+}
+
 // v3.0: INTELIGÊNCIA DE LAYOUT DINÂMICO
 model ConfiguracaoLayout {
   id          String   @id @default(cuid())
@@ -319,9 +327,4 @@ model ConfiguracaoLayout {
   updated_at  DateTime @updatedAt
 
   @@unique([contexto])
-}
-
-enum Role {
-  ADMIN
-  USER
 }

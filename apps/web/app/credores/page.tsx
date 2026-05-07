@@ -21,6 +21,8 @@ export default function CredoresPage() {
   const [grupoId, setGrupoId] = useState('');
   const [enviado, setEnviado] = useState('');
   const [numeroPgc, setNumeroPgc] = useState('');
+  const [hasMinimo, setHasMinimo] = useState('');
+  const [hasDesconto, setHasDesconto] = useState('');
   const [pgcOptions, setPgcOptions] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [newNome, setNewNome] = useState('');
@@ -38,12 +40,21 @@ export default function CredoresPage() {
 
   const gruposQuery = useQuery({ queryKey: ['grupos'], queryFn: listGrupos });
   const credoresQuery = useQuery({
-    queryKey: ['credores', nome, grupoId, enviado, numeroPgc, currentPage],
-    queryFn: () => listCredores({ nome, grupoId, enviado, numero_pgc: numeroPgc, skip: currentPage * PAGE_SIZE, take: PAGE_SIZE }),
+    queryKey: ['credores', nome, grupoId, enviado, numeroPgc, hasMinimo, hasDesconto, currentPage],
+    queryFn: () => listCredores({ 
+      nome, 
+      grupoId, 
+      enviado, 
+      numero_pgc: numeroPgc, 
+      hasMinimo,
+      hasDesconto,
+      skip: currentPage * PAGE_SIZE, 
+      take: PAGE_SIZE 
+    }),
   });
 
   // Reset page when filters change
-  useEffect(() => { setCurrentPage(0); }, [nome, grupoId, enviado, numeroPgc]);
+  useEffect(() => { setCurrentPage(0); }, [nome, grupoId, enviado, numeroPgc, hasMinimo, hasDesconto]);
 
   const pageInfo = credoresQuery.data?.page;
   const totalPages = pageInfo ? Math.ceil(pageInfo.total / PAGE_SIZE) : 0;
@@ -202,6 +213,22 @@ export default function CredoresPage() {
               ))}
             </select>
           </label>
+          <label>
+            Mínimo
+            <select value={hasMinimo} onChange={(e) => setHasMinimo(e.target.value)}>
+              <option value="">Todos</option>
+              <option value="sim">Sim</option>
+              <option value="nao">Não</option>
+            </select>
+          </label>
+          <label>
+            Desconto
+            <select value={hasDesconto} onChange={(e) => setHasDesconto(e.target.value)}>
+              <option value="">Todos</option>
+              <option value="sim">Sim</option>
+              <option value="nao">Não</option>
+            </select>
+          </label>
           <div className="actions-row" style={{ alignItems: 'end' }}>
             <ActionButton type="button" variant="secondary" onClick={() => handleExport('csv')} label="Export CSV" />
             <ActionButton type="button" variant="secondary" onClick={() => handleExport('xlsx')} label="Export XLSX" />
@@ -230,6 +257,8 @@ export default function CredoresPage() {
                 <th>Nome</th>
                 <th>Email</th>
                 <th>PGC</th>
+                <th>Mínimo</th>
+                <th>Desconto</th>
                 <th>Valor PGC</th>
                 <th>Status</th>
                 <th>Grupo</th>
@@ -249,10 +278,12 @@ export default function CredoresPage() {
                         style={{ width: 14, height: 14 }}
                       />
                     </td>
-                    <td>{row.nome}</td>
-                    <td>{row.email ?? '-'}</td>
-                    <td>{row.numero_pgc ?? '-'}</td>
-                    <td>{`R$ ${row.valor_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}</td>
+                    <td><strong>{row.nome}</strong></td>
+                    <td>{row.email}</td>
+                    <td><span className="chip secondary">PGC {row.numero_pgc || '-'}</span></td>
+                    <td>{row.ultimo_minimo > 0 ? `R$ ${row.ultimo_minimo.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                    <td>{row.ultimo_desconto > 0 ? `R$ ${row.ultimo_desconto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
+                    <td><strong>R$ {row.valor_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</strong></td>
                     <td>
                       <StatusBadge status={row.enviado ? 'Enviado' : 'Não enviado'} />
                     </td>
