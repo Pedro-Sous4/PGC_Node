@@ -246,9 +246,9 @@ export class SystemSettingsService {
 
       info = await transporter.sendMail({
         from: fromLabel,
-        to: 'pedroforoni@gmail.com', // TRAVA DE SEGURANÇA
+        to: toAddress,
         replyTo: settings.email.replyTo || undefined,
-        subject: '[MODO TESTE] [PGC] Teste de remetente configurado',
+        subject: '[PGC] Teste de remetente configurado',
         text: `Este e-mail confirma que o remetente e o SMTP do sistema PGC foram configurados com sucesso. Originalmente para: ${toAddress}`,
       });
     } catch (error) {
