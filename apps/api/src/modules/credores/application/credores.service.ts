@@ -135,6 +135,7 @@ type CredorDiscountHistoryRow = {
   restante_proximo_pgc: number;
   desconto_acumulado: number;
   carryover_anterior: number;
+  total_adquirido: number;
   created_at?: string;
 };
 
@@ -207,6 +208,7 @@ export class CredoresService {
         restante_proximo_pgc: Number(g.novoSaldo.toFixed(2)),
         desconto_acumulado: 0,
         carryover_anterior: Number(g.carryover.toFixed(2)),
+        total_adquirido: Number(g.totalAdquirido.toFixed(2)),
         created_at: g.createdAt.toISOString(),
       });
     }
@@ -224,7 +226,8 @@ export class CredoresService {
     for (const row of dedupedRows) {
       const key = normalizeEmpresaHistoryKey(row.empresa);
       const previousTotal = runningTotalByEmpresa.get(key) || 0;
-      const currentTotal = Number((previousTotal + row.desconto_aplicado).toFixed(2));
+      const newDiscount = Math.max(0, row.desconto_total - row.carryover_anterior);
+      const currentTotal = Number((previousTotal + newDiscount).toFixed(2));
       
       row.desconto_acumulado = currentTotal;
       runningTotalByEmpresa.set(key, currentTotal);

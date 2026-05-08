@@ -818,8 +818,8 @@ function derivePgcMasterRecords(
   };
 
   const colCredor = findLastColumnIndex([/\bcredor\b/]);
-  const colMinimo = findLastColumnIndex([/minimo\/fixo\s*garantido\s*para\s*emissao\s*nf/i, /m[íi]nimo\/fixo/, /valor\s*fixo/, /m[íi]nimo\s*garantido/, /m[íi]nimo\s*reten[çc][ãa]o/]);
-  const colBruto = findLastColumnIndex([/valor\s*liquido\s*comiss[ãa]o\s*a\s*pagar/i, /valor\s*bruto/, /total\s*geral/]);
+  const colMinimo = findLastColumnIndex([/minimo\s+fixo\s+garantido\s+para\s+emissao\s+nf/i, /m[íi]nimo\s+fixo/, /valor\s+fixo/, /m[íi]nimo\s+garantido/, /m[íi]nimo\s+reten[çc][ãa]o/]);
+  const colBruto = findLastColumnIndex([/valor\s*liquido\s*comiss[ãa]o\s*a\s*pagar/i, /valor\s*bruto/, /total\s*geral/, /\btotal\b/]);
   const colEmpresaEmissao = findLastColumnIndex([/empresa\s*emissao/, /emissor/]);
   const colCnpj = findLastColumnIndex([/\bcnpj\b/]);
   
@@ -1104,7 +1104,7 @@ function toSheetBaseByRules(rows: RowRecord[], headers: string[]): XLSX.WorkShee
     { output: 'Cliente', patterns: [/^cliente$/] },
     { output: 'Parcela', patterns: [/^parcela$/] },
     { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
-    { output: 'Valor original', patterns: [/valor original/] },
+    { output: 'Valor original', patterns: [/valor original/, /valor\s*bruto/, /total\s*geral/, /\btotal\b/] },
   ]);
   return toSheetFromRecords(projected);
 }
@@ -1117,7 +1117,7 @@ function toSheetExtratoByRules(rows: RowRecord[], headers: string[]): XLSX.WorkS
     { output: 'Cliente', patterns: [/^cliente$/] },
     { output: 'Parcela', patterns: [/^parcela$/] },
     { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
-    { output: 'Valor original', patterns: [/valor original/] },
+    { output: 'Valor original', patterns: [/valor original/, /valor\s*bruto/, /total\s*geral/, /\btotal\b/] },
     { output: 'Dt. vencimento', patterns: [/dt vencimento|data vencimento/] },
     { output: 'Obs. baixa', patterns: [/obs baixa/] },
   ]);
@@ -1132,7 +1132,7 @@ function toSheetProdutividadeByRules(rows: RowRecord[], headers: string[]): XLSX
     { output: 'Cliente', patterns: [/^cliente$/] },
     { output: 'Parcela', patterns: [/^parcela$/] },
     { output: 'Dt. emissão', patterns: [/dt emissao|data emissao/] },
-    { output: 'Valor original', patterns: [/valor original/] },
+    { output: 'Valor original', patterns: [/valor original/, /valor\s*bruto/, /total\s*geral/, /\btotal\b/] },
     { output: 'Dt. vencimento', patterns: [/dt vencimento|data vencimento/] },
   ]);
   return toSheetFromRecords(projected);
@@ -1511,6 +1511,9 @@ export function startProcessingWorker(): Worker {
       // Regra Laghetto Sports: Não existe mínimo nem desconto.
       if (flow === 'laghetto-sports') {
         for (const row of minimoRecords) {
+          // Garante que qualquer valor detectado (seja como bruto ou mínimo) seja tratado como valor bruto.
+          // O campo row.total já contém a soma de (bruto + minimo), então o usamos como base.
+          row.valorBruto = Number((row.total ?? 0).toFixed(2));
           row.minimo = 0;
           row.desconto = 0;
           row.total = row.valorBruto;
