@@ -53,7 +53,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
     fromName: 'Financeiro PGC',
     fromAddress: process.env.EMAIL_FROM ?? '',
     replyTo: process.env.EMAIL_REPLY_TO ?? '',
-    assuntoPadrao: 'PGC {historico.numero_pgc} - {historico.periodo}',
+    assuntoPadrao: 'PGC {historico.numero_pgc}',
   },
   envio: {
     loteMaximoCredores: 200,

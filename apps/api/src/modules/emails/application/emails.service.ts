@@ -1122,7 +1122,7 @@ export class EmailsService {
           throw new BadRequestException('Template gerou corpo de email vazio.');
         }
 
-        const subjectTemplate = systemSettings.email.assuntoPadrao || 'PGC {historico.numero_pgc} - {historico.periodo}';
+        const subjectTemplate = systemSettings.email.assuntoPadrao || 'PGC {historico.numero_pgc}';
         const subjectRaw = applyTemplate(subjectTemplate, {
           'historico.numero_pgc': numeroPgc,
           'historico.periodo': historico?.periodo ?? credor.periodo ?? '-',

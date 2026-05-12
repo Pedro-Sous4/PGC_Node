@@ -322,13 +322,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
 
           <section className="grid ui-metric-grid" style={{ marginTop: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
             <MetricCard label="Total recebido" value={`R$ ${toCurrency(Number(credor.resumo.total))}`} tone="primary" />
-            <MetricCard label="Períodos" value={credor.resumo.quantidade_periodos} />
+            <MetricCard label="Nº PGCs" value={credor.resumo.quantidade_periodos} />
             <MetricCard
               label="Último PGC"
               value={historicoRows.length > 0 ? `PGC ${historicoRows[0].numeroPgc}` : '-'}
               tone="accent"
             />
-            <MetricCard label="Média por período" value={`R$ ${toCurrency(averageValue)}`} />
+            <MetricCard label="Média por PGC" value={`R$ ${toCurrency(averageValue)}`} />
             <MetricCard
               label="Saldo devedor"
               value={`R$ ${toCurrency(Number(credor.resumo.saldo_devedor ?? 0))}`}

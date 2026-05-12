@@ -435,7 +435,7 @@ export class CredoresService {
         total,
         media,
         saldo_devedor,
-        quantidade_periodos: new Set(credor.rendimentos.map((item) => item.referencia)).size,
+        quantidade_periodos: quantidade_periodos,
       },
     };
   }
