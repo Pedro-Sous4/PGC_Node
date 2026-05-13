@@ -363,6 +363,7 @@ export class EmailsService {
   async sendBatch(dto: SendEmailsDto, dispatchId?: string): Promise<SendBatchResult> {
     const where: Prisma.CredorWhereInput = {};
     if (dto.grupoId) where.grupoId = dto.grupoId;
+    if (dto.apenasNaoEnviados) where.enviado = false;
     if (dto.escopo === 'credor') {
       if (!dto.credorIds?.length) {
         const emptyResult: SendBatchResult = {

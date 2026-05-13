@@ -469,6 +469,7 @@ export async function enviarEmails(payload: {
   custom_mensagem_principal?: string;
   custom_texto_minimo?: string;
   custom_texto_descontos?: string;
+  apenasNaoEnviados?: boolean;
 }): Promise<EmailSendResult> {
   const res = await fetchWithAuth(`${API}/emails/enviar`, {
     method: 'POST',
@@ -488,6 +489,7 @@ export async function iniciarEnvioEmails(payload: {
   custom_mensagem_principal?: string;
   custom_texto_minimo?: string;
   custom_texto_descontos?: string;
+  apenasNaoEnviados?: boolean;
 }): Promise<{ dispatchId: string }> {
   const res = await fetchWithAuth(`${API}/emails/enviar/async`, {
     method: 'POST',
