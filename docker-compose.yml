@@ -2,6 +2,7 @@ services:
   postgres:
     image: postgres:16
     container_name: pgc-postgres
+    restart: always
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -14,12 +15,14 @@ services:
   redis:
     image: redis:7
     container_name: pgc-redis
+    restart: always
     ports:
       - '6379:6379'
 
   minio:
     image: minio/minio:latest
     container_name: pgc-minio
+    restart: always
     command: server /data --console-address ':9001'
     environment:
       MINIO_ROOT_USER: minio
@@ -33,6 +36,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: pgc-prometheus
+    restart: always
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
     ports:
