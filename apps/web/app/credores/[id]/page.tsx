@@ -202,7 +202,7 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
       const pA = a.x.split('|')[1]?.trim() || '';
       const pB = b.x.split('|')[1]?.trim() || '';
       return parsePeriodoToSortKey(pA) - parsePeriodoToSortKey(pB);
-    });
+    }).slice(-5);
   }, [credor]);
 
   const averageValue = useMemo(() => {
