@@ -119,6 +119,7 @@ export interface SystemSettings {
   };
   empresasCnpj: Array<{
     empresa: string;
+    apelido?: string;
     cnpj: string;
   }>;
   audit: {
@@ -725,3 +726,39 @@ export async function lgmResolveError(
   return res.json();
 }
 
+export async function updateCredorHistorico(
+  credorId: string,
+  pgc: string,
+  data: {
+    empresa?: string;
+    carryoverAnterior?: number;
+    descontoTotal?: number;
+    descontoAplicado?: number;
+    restanteProximoPgc?: number;
+    motivo?: string;
+  },
+) {
+  const res = await fetchWithAuth(`${API}/credores/${credorId}/historico/${encodeURIComponent(pgc)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || 'Falha ao atualizar histórico do credor');
+  }
+  return res.json();
+}
+
+export async function reprocessCredor(requestId: string, credorSlug: string) {
+  const res = await fetchWithAuth(`${API}/jobs/${requestId}/reprocess`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ credores: [credorSlug] }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || 'Falha ao reprocessar credor');
+  }
+  return res.json();
+}

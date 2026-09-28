@@ -11,6 +11,7 @@ import { BatchActionDto } from '../dto/batch-action.dto';
 import { CreateCredorDto } from '../dto/create-credor.dto';
 import { ListCredoresQueryDto } from '../dto/list-credores-query.dto';
 import { UpdateCredorDto } from '../dto/update-credor.dto';
+import { UpdateHistoricoDto } from '../dto/update-historico.dto';
 
 const PREPOSICOES = new Set(['de', 'da', 'do', 'das', 'dos', 'e']);
 
@@ -137,6 +138,7 @@ type CredorDiscountHistoryRow = {
   carryover_anterior: number;
   total_adquirido: number;
   created_at?: string;
+  narrativa?: string;
 };
 
 @Injectable()
@@ -160,6 +162,9 @@ export class CredoresService {
       novoSaldo: number;
       totalAbatido: number;
       totalAdquirido: number;
+      ajusteManual: boolean;
+      motivoAjuste: string | null;
+      customDescontoTotal: number | null;
       createdAt: Date;
     }>();
 
@@ -170,6 +175,16 @@ export class CredoresService {
       const valor = Number(evento.valor);
       const isAbatimento = evento.tipo === 'ABATIMENTO_PGC';
       
+      let customDt: number | null = null;
+      let rawMotivo = evento.observacao;
+      if (evento.tipo === 'AJUSTE_MANUAL' && rawMotivo) {
+        const dtMatch = rawMotivo.match(/\[DT:([\d.]+)\](.*)/s);
+        if (dtMatch) {
+          customDt = Number(dtMatch[1]);
+          rawMotivo = dtMatch[2].trim();
+        }
+      }
+
       if (!groups.has(key)) {
         groups.set(key, {
           id: evento.id,
@@ -178,26 +193,46 @@ export class CredoresService {
           carryover: Number(evento.saldoAnterior),
           novoSaldo: Number(evento.saldoPosterior),
           totalAbatido: isAbatimento ? valor : 0,
-          totalAdquirido: !isAbatimento ? valor : 0,
+          totalAdquirido: !isAbatimento && evento.tipo !== 'AJUSTE_MANUAL' ? valor : 0,
+          ajusteManual: evento.tipo === 'AJUSTE_MANUAL',
+          motivoAjuste: rawMotivo,
+          customDescontoTotal: customDt,
           createdAt: evento.created_at,
         });
       } else {
         const g = groups.get(key)!;
-        g.novoSaldo = Number(evento.saldoPosterior);
-        if (isAbatimento) {
-          g.totalAbatido += valor;
+        if (evento.tipo === 'AJUSTE_MANUAL') {
+          // AJUSTE_MANUAL sobrescreve todos os valores calculados do grupo
+          g.ajusteManual = true;
+          g.motivoAjuste = rawMotivo;
+          g.customDescontoTotal = customDt;
+          g.carryover = Number(evento.saldoAnterior);
+          g.totalAbatido = valor;
+          g.novoSaldo = Number(evento.saldoPosterior);
         } else {
-          g.totalAdquirido += valor;
+          g.novoSaldo = Number(evento.saldoPosterior);
+          if (isAbatimento) {
+            g.totalAbatido += valor;
+          } else {
+            g.totalAdquirido += valor;
+          }
         }
-        // Mantemos o carryover do primeiro evento do grupo
+        // Mantemos o carryover do primeiro evento, EXCETO quando há AJUSTE_MANUAL (já tratado acima)
       }
     }
 
     const dedupedRows: CredorDiscountHistoryRow[] = [];
     for (const g of groups.values()) {
       // Desconto total = O maior valor entre o que existia/entrou e o que foi tratado (abatido + restante)
-      // Isso garante que mesmo descontos quitados na hora apareçam no total.
-      const descontoTotal = Math.max(g.carryover + g.totalAdquirido, g.totalAbatido + g.novoSaldo);
+      // Quando for ajuste manual, respeitamos o valor do ajuste (totalAbatido + novoSaldo), que pode ser menor.
+      const descontoTotal = g.customDescontoTotal !== null 
+        ? g.customDescontoTotal 
+        : (g.ajusteManual ? g.totalAbatido + g.novoSaldo : Math.max(g.carryover + g.totalAdquirido, g.totalAbatido + g.novoSaldo));
+
+      // Atualizamos o totalAdquirido para fazer sentido matematicamente no ajuste manual
+      if (g.ajusteManual) {
+        g.totalAdquirido = Math.max(0, descontoTotal - g.carryover);
+      }
 
       dedupedRows.push({
         id: g.id,
@@ -231,6 +266,40 @@ export class CredoresService {
       
       row.desconto_acumulado = currentTotal;
       runningTotalByEmpresa.set(key, currentTotal);
+      
+      const g = groups.get(`${row.pgc}::${key}`);
+      
+      let narrativa = `No período **PGC ${row.pgc}**, o credor `;
+      if (row.carryover_anterior > 0) {
+        narrativa += `iniciou devendo **R$ ${row.carryover_anterior.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}** do mês anterior. `;
+      } else {
+        narrativa += `iniciou sem dívidas do mês anterior. `;
+      }
+
+      if (row.total_adquirido > 0) {
+        narrativa += `Houve o lançamento de um novo desconto no valor de **R$ ${row.total_adquirido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}**, `;
+        narrativa += `totalizando **R$ ${row.desconto_total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}** em dívidas. `;
+      } else if (row.desconto_total > 0 && row.carryover_anterior === 0) {
+        narrativa += `Houve um lançamento de desconto no valor de **R$ ${row.desconto_total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}**. `;
+      }
+
+      if (row.desconto_aplicado > 0) {
+        narrativa += `O credor obteve rendimentos suficientes para abater **R$ ${row.desconto_aplicado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}**. `;
+      } else {
+        narrativa += `O credor não obteve rendimentos suficientes para abater nenhum valor. `;
+      }
+
+      if (row.restante_proximo_pgc > 0) {
+        narrativa += `O restante de **R$ ${row.restante_proximo_pgc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}** foi transferido como saldo devedor (carryover) para o próximo PGC.`;
+      } else {
+        narrativa += `Toda a dívida foi quitada ou perdoada neste PGC.`;
+      }
+
+      if (g?.ajusteManual) {
+        narrativa += `\n\n⚠️ **Nota:** Foi realizado um **Ajuste Manual** neste PGC pela gerência, alterando a matemática padrão do sistema. Motivo registrado: "${g.motivoAjuste || 'Nenhum motivo informado'}".`;
+      }
+      
+      row.narrativa = narrativa;
     }
 
     // Re-ordenar para exibição (mais novo para o mais antigo)
@@ -753,5 +822,129 @@ export class CredoresService {
     }
 
     return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 9 } });
+  }
+
+  async updateHistorico(id: string, pgc: string, dto: UpdateHistoricoDto) {
+    const credor = await this.prisma.credor.findUnique({ where: { id } });
+    if (!credor) {
+      throw new NotFoundException('Credor nao encontrado.');
+    }
+
+    const cleanPgc = String(pgc).replace(/\D/g, '');
+
+    // Busca eventos existentes para o credor
+    const todosEventos = await this.prisma.eventoFinanceiro.findMany({
+      where: { credorId: id },
+      orderBy: { created_at: 'asc' },
+    });
+
+    // Filtra eventos do PGC alvo
+    const eventosPgc = todosEventos.filter((e) => {
+      if (!e.numero_pgc) return false;
+      const num = String(e.numero_pgc).replace(/\D/g, '');
+      return num === cleanPgc || e.numero_pgc === pgc;
+    });
+
+    const empresa = dto.empresa || eventosPgc[0]?.empresa || 'SPORTS';
+
+    // Obtém valores atuais ou usa os enviados
+    const currentRows = await this.loadDiscountHistoryRowsForCredor(id);
+    const currentRow = currentRows.find((r) => String(r.pgc).replace(/\D/g, '') === cleanPgc);
+
+    const carryoverAnterior = dto.carryoverAnterior !== undefined ? Number(dto.carryoverAnterior) : (currentRow?.carryover_anterior ?? 0);
+    const descontoTotal = dto.descontoTotal !== undefined ? Number(dto.descontoTotal) : (currentRow?.desconto_total ?? 0);
+    const descontoAplicado = dto.descontoAplicado !== undefined ? Number(dto.descontoAplicado) : (currentRow?.desconto_aplicado ?? 0);
+    const saldoPosterior = dto.restanteProximoPgc !== undefined 
+      ? Number(dto.restanteProximoPgc) 
+      : Number((descontoTotal - descontoAplicado).toFixed(2));
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1. Remove ajuste manual pré-existente para o mesmo PGC se houver
+      await tx.eventoFinanceiro.deleteMany({
+        where: {
+          credorId: id,
+          numero_pgc: pgc,
+          tipo: 'AJUSTE_MANUAL',
+        },
+      });
+
+      const rawMotivo = dto.motivo || 'Ajuste manual via interface';
+      const observacao = `[DT:${descontoTotal}] ${rawMotivo}`;
+
+      // 2. Cria o novo evento de AJUSTE_MANUAL
+      await tx.eventoFinanceiro.create({
+        data: {
+          credorId: id,
+          tipo: 'AJUSTE_MANUAL',
+          valor: descontoAplicado,
+          saldoAnterior: new Prisma.Decimal(carryoverAnterior),
+          saldoPosterior: new Prisma.Decimal(saldoPosterior),
+          empresa,
+          numero_pgc: pgc,
+          observacao,
+        },
+      });
+
+      // 3. Cascata: Atualiza eventos subsequentes se não tiverem ajustes manuais próprios
+      const pgcNumTarget = Number(cleanPgc);
+
+      // Agrupa eventos posteriores por PGC
+      const eventosPosteriores = todosEventos.filter((e) => {
+        if (!e.numero_pgc) return false;
+        const eNum = Number(String(e.numero_pgc).replace(/\D/g, ''));
+        return Number.isFinite(eNum) && eNum > pgcNumTarget;
+      });
+
+      // Se houver eventos posteriores, ajusta o saldoAnterior / saldoPosterior em cadeia
+      let runningCarryover = saldoPosterior;
+
+      // Ordenar PGCs posteriores em ordem crescente
+      const pgcMap = new Map<string, typeof eventosPosteriores>();
+      for (const ev of eventosPosteriores) {
+        const key = String(ev.numero_pgc);
+        if (!pgcMap.has(key)) pgcMap.set(key, []);
+        pgcMap.get(key)!.push(ev);
+      }
+
+      const sortedPgcs = Array.from(pgcMap.keys()).sort((a, b) => {
+        return Number(a.replace(/\D/g, '')) - Number(b.replace(/\D/g, ''));
+      });
+
+      for (const posteriorPgc of sortedPgcs) {
+        const evs = pgcMap.get(posteriorPgc)!;
+        const temAjusteManualProprio = evs.some((e) => e.tipo === 'AJUSTE_MANUAL');
+
+        if (temAjusteManualProprio) {
+          // Se o PGC posterior tem seu próprio ajuste manual, a cascata para aqui
+          break;
+        }
+
+        // Caso contrário, atualiza os eventos desse PGC com o novo carryover
+        for (const ev of evs) {
+          const val = Number(ev.valor);
+          const novoSaldoPos = ev.tipo === 'ABATIMENTO_PGC'
+            ? Number((runningCarryover - val).toFixed(2))
+            : Number((runningCarryover + val).toFixed(2));
+
+          await tx.eventoFinanceiro.update({
+            where: { id: ev.id },
+            data: {
+              saldoAnterior: new Prisma.Decimal(runningCarryover),
+              saldoPosterior: new Prisma.Decimal(Math.max(0, novoSaldoPos)),
+            },
+          });
+          runningCarryover = Math.max(0, novoSaldoPos);
+        }
+      }
+
+      // 4. Atualiza SaldoDevedor atual do credor no banco
+      await tx.saldoDevedor.upsert({
+        where: { credorId_empresa: { credorId: id, empresa } },
+        update: { valor: Math.max(0, runningCarryover) },
+        create: { credorId: id, empresa, valor: Math.max(0, runningCarryover) },
+      });
+    });
+
+    return this.getById(id);
   }
 }

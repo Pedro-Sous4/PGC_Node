@@ -10,6 +10,8 @@ import {
   getCredor,
   getEmailTemplate,
   openCredorFolder,
+  reprocessCredor,
+  updateCredorHistorico,
 } from '../../../lib/api';
 import { ActionButton, AvatarBadge, ChartCard, DataTable, MetricCard, SectionCard } from '../../components/ui';
 
@@ -77,6 +79,7 @@ type DiscountHistoryRow = {
   restante_proximo_pgc: number;
   desconto_acumulado: number;
   carryover_anterior: number;
+  narrativa?: string;
 };
 
 
@@ -93,8 +96,25 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
   const [emailModalMessage, setEmailModalMessage] = useState('');
   const [emailTemplateDraft, setEmailTemplateDraft] = useState({
     mensagem_principal: '',
+    texto_minimo: '',
     texto_descontos: '',
   });
+
+  const [editingRow, setEditingRow] = useState<DiscountHistoryRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    carryover_anterior: 0,
+    desconto_total: 0,
+    desconto_aplicado: 0,
+    restante_proximo_pgc: 0,
+    motivo: '',
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editError, setEditError] = useState('');
+
+  const [narrativeRow, setNarrativeRow] = useState<DiscountHistoryRow | null>(null);
+
+  const [reprocessing, setReprocessing] = useState(false);
+  const [reprocessMessage, setReprocessMessage] = useState('');
 
   const query = useQuery({
     queryKey: ['credor', params.id],
@@ -153,6 +173,7 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
         restante_proximo_pgc: Number(row.restante_proximo_pgc ?? 0),
         desconto_acumulado: Number(row.desconto_acumulado ?? 0),
         carryover_anterior: Number(row.carryover_anterior ?? 0),
+        narrativa: row.narrativa ? String(row.narrativa) : undefined,
       }) as DiscountHistoryRow)
       .sort((a: DiscountHistoryRow, b: DiscountHistoryRow) => parsePgcToSortKey(b.pgc) - parsePgcToSortKey(a.pgc));
   }, [credor]);
@@ -290,6 +311,60 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
     }
   }
 
+  function handleOpenEditModal(row: DiscountHistoryRow) {
+    setEditingRow(row);
+    setEditForm({
+      carryover_anterior: row.carryover_anterior,
+      desconto_total: row.desconto_total,
+      desconto_aplicado: row.desconto_aplicado,
+      restante_proximo_pgc: row.restante_proximo_pgc,
+      motivo: '',
+    });
+    setEditError('');
+  }
+
+  async function handleSaveEdit() {
+    if (!credor?.id || !editingRow) return;
+    setSavingEdit(true);
+    setEditError('');
+    try {
+      await updateCredorHistorico(credor.id, editingRow.pgc, {
+        empresa: editingRow.empresa,
+        carryoverAnterior: Number(editForm.carryover_anterior),
+        descontoTotal: Number(editForm.desconto_total),
+        descontoAplicado: Number(editForm.desconto_aplicado),
+        restanteProximoPgc: Number(editForm.restante_proximo_pgc),
+        motivo: editForm.motivo,
+      });
+      setEditingRow(null);
+      query.refetch();
+    } catch (err) {
+      setEditError((err as Error).message);
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function handleReprocess() {
+    if (!credor) return;
+    const latestRequestId = (credor.historicos ?? []).map((h: any) => h.requestId).filter(Boolean)[0];
+    if (!latestRequestId) {
+      setReprocessMessage('Não foi possível encontrar um Job (requestId) para reprocessar este credor.');
+      return;
+    }
+    setReprocessing(true);
+    setReprocessMessage('');
+    try {
+      await reprocessCredor(latestRequestId, credor.slug);
+      setReprocessMessage('Reprocessamento iniciado com sucesso! Os arquivos serão gerados em instantes.');
+      query.refetch();
+    } catch (err) {
+      setReprocessMessage((err as Error).message);
+    } finally {
+      setReprocessing(false);
+    }
+  }
+
   return (
     <DashboardShell
       activeNav="credores"
@@ -332,7 +407,7 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
             <MetricCard
               label="Saldo devedor"
               value={`R$ ${toCurrency(Number(credor.resumo.saldo_devedor ?? 0))}`}
-              tone={Number(credor.resumo.saldo_devedor ?? 0) > 0 ? 'danger' : 'neutral'}
+              tone={Number(credor.resumo.saldo_devedor ?? 0) > 0 ? 'accent' : 'neutral'}
             />
           </section>
 
@@ -416,7 +491,7 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
               title="Histórico de Descontos por PGC"
               tone="accent"
               actions={
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                   <select
                     value={discountPgcFilter}
                     onChange={(e) => setDiscountPgcFilter(e.target.value)}
@@ -437,6 +512,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
                       <option key={empresa} value={empresa}>{empresa}</option>
                     ))}
                   </select>
+                  <ActionButton
+                    type="button"
+                    variant="primary"
+                    label={reprocessing ? 'Reprocessando...' : '🔄 Reprocessar'}
+                    onClick={handleReprocess}
+                    disabled={reprocessing}
+                  />
                 </div>
               }
             >
@@ -450,12 +532,13 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
                     <th>Desconto aplicado</th>
                     <th>Restante para próximo PGC</th>
                     <th>Desconto acumulado</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredDescontoHistoricoRows.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ color: 'var(--muted)' }}>
+                      <td colSpan={8} style={{ color: 'var(--muted)' }}>
                         Sem histórico de descontos para este credor.
                       </td>
                     </tr>
@@ -469,13 +552,135 @@ export default function CredorDetailPage({ params }: { params: { id: string } })
                         <td>{`R$ ${toCurrency(row.desconto_aplicado)}`}</td>
                         <td>{`R$ ${toCurrency(row.restante_proximo_pgc)}`}</td>
                         <td>{`R$ ${toCurrency(row.desconto_acumulado)}`}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <ActionButton
+                              type="button"
+                              variant="secondary"
+                              label="Editar"
+                              onClick={() => handleOpenEditModal(row)}
+                            />
+                            {row.narrativa ? (
+                              <ActionButton
+                                type="button"
+                                variant="secondary"
+                                label="Obs."
+                                onClick={() => setNarrativeRow(row)}
+                              />
+                            ) : null}
+                          </div>
+                        </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </DataTable>
             </SectionCard>
+            {reprocessMessage ? (
+              <p style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: 'var(--surface-muted, #f8fafc)' }}>
+                {reprocessMessage}
+              </p>
+            ) : null}
           </section>
+
+          {editingRow ? (
+            <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Editar Histórico de Desconto" onClick={() => setEditingRow(null)}>
+              <section className="card soft-primary modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 500 }}>
+                <span className="chip primary">Ajuste Manual de PGC</span>
+                <h3 style={{ marginTop: 8, marginBottom: 8 }}>Editar Desconto - PGC {editingRow.pgc}</h3>
+                <p style={{ marginTop: 0, color: 'var(--muted)' }}>Empresa: <strong>{editingRow.empresa}</strong></p>
+
+                <div className="grid" style={{ gap: 12, marginTop: 12 }}>
+                  <label>
+                    Carryover Anterior (Dívida vinda do PGC anterior):
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.carryover_anterior}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, carryover_anterior: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </label>
+
+                  <label>
+                    Desconto Total (Dívida total neste PGC):
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.desconto_total}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, desconto_total: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </label>
+
+                  <label>
+                    Desconto Aplicado (Valor abatido neste PGC):
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.desconto_aplicado}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, desconto_aplicado: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </label>
+
+                  <label>
+                    Restante para o próximo PGC (Saldo Devedor futuro):
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={editForm.restante_proximo_pgc}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, restante_proximo_pgc: parseFloat(e.target.value) || 0 }))}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </label>
+
+                  <label>
+                    Motivo / Justificativa do Ajuste (Obrigatório para auditoria):
+                    <textarea
+                      rows={3}
+                      placeholder="Ex: Abatimento reduzido conforme aprovação do gerente."
+                      value={editForm.motivo}
+                      onChange={(e) => setEditForm((prev) => ({ ...prev, motivo: e.target.value }))}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </label>
+                </div>
+
+                <div className="actions-row" style={{ marginTop: 16, justifyContent: 'flex-end', gap: 8 }}>
+                  <ActionButton type="button" variant="ghost" label="Fechar" onClick={() => setEditingRow(null)} />
+                  <ActionButton
+                    type="button"
+                    label={savingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                    onClick={handleSaveEdit}
+                    disabled={savingEdit}
+                  />
+                </div>
+
+                {editError ? <p style={{ marginTop: 10, color: 'var(--danger, red)' }}>{editError}</p> : null}
+              </section>
+            </div>
+          ) : null}
+
+          {narrativeRow ? (
+            <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Observações do PGC" onClick={() => setNarrativeRow(null)}>
+              <section className="card soft-primary modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 550 }}>
+                <span className="chip primary">Observações (Obs.)</span>
+                <h3 style={{ marginTop: 8, marginBottom: 8 }}>Explicação do PGC {narrativeRow.pgc}</h3>
+                <p style={{ marginTop: 0, color: 'var(--muted)' }}>Credor: <strong>{credor.nomeExibivel}</strong> | Empresa: <strong>{narrativeRow.empresa}</strong></p>
+
+                <div style={{ marginTop: 14, whiteSpace: 'pre-line', lineHeight: 1.6, fontSize: '0.95rem', background: 'var(--surface-muted, #f8fafc)', padding: 16, borderRadius: 8 }}>
+                  {narrativeRow.narrativa?.split('**').map((chunk, idx) => 
+                    idx % 2 === 1 ? <strong key={idx}>{chunk}</strong> : chunk
+                  )}
+                </div>
+
+                <div className="actions-row" style={{ marginTop: 16, justifyContent: 'flex-end' }}>
+                  <ActionButton type="button" variant="ghost" label="Fechar" onClick={() => setNarrativeRow(null)} />
+                </div>
+              </section>
+            </div>
+          ) : null}
 
 
           {isEmailModalOpen ? (

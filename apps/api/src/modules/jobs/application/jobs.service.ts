@@ -530,11 +530,12 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
           });
 
           if (dto.credorUpdate.discountHistory && dto.credorUpdate.discountHistory.length > 0) {
-            // Limpa eventos financeiros anteriores para este PGC/Credor antes de persistir novo (evita duplicidade em re-runs)
+            // Limpa eventos financeiros anteriores (exceto ajustes manuais da gerência) para este PGC/Credor antes de persistir novo (evita duplicidade em re-runs)
             await this.prisma.eventoFinanceiro.deleteMany({
               where: {
                 credorId: credor.id,
                 numero_pgc: dto.credorUpdate.numeroPgc,
+                tipo: { not: 'AJUSTE_MANUAL' },
               },
             });
 
