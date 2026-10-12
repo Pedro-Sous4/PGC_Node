@@ -114,6 +114,34 @@ function normalizeEmpresaHistoryKey(input: string): string {
     .trim();
 }
 
+const EMPRESA_NOMES_OFICIAIS: Record<string, string> = {
+  'altos': 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA',
+  'altos da borges': 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA',
+  'gvp': 'GVP PARTICIPACOES E INVESTIMENTOS LTDA',
+  'reserva dos vinhedos': 'RESERVA DOS VINHEDOS INCORPORADORA SPE LTDA',
+  'lgm/jpz': 'LGM PARTICIPACOES LTDA | FILIAL PEDRAS ALTAS',
+  'golden/lgm': 'GOLDEN LAGHETTO EMPREENDIMENTOS IMOBILIARIOS SPE LTD',
+  'athivabrasil': 'ATHIVABRASIL EMPREENDIMENTOS IMOBILIARIOS LTDA',
+  'canela': 'CANELA EMPREENDIMENTOS IMOBILIARIOS LTDA',
+  'asa delta': 'ASA DELTA EMPREENDIMENTOS IMOBILIARIOS LTDA',
+  'lgm/golden': 'LGM PARTICIPACOES LTDA | FILIAL BORGES',
+  'lsrg': 'LSRG RESORT SPE LTDA SCP',
+  'sci': 'SCI RESORT SPE LTDA SCP',
+  'jpz': 'JPZ EMPREENDIMENTOS LTDA',
+};
+
+function formatEmpresaNome(empresa: string): string {
+  if (!empresa) return '-';
+  const clean = empresa.trim().toLowerCase();
+  if (EMPRESA_NOMES_OFICIAIS[clean]) {
+    return EMPRESA_NOMES_OFICIAIS[clean];
+  }
+  if (clean === 'altos' || clean.startsWith('altos ')) {
+    return 'ALTOS DA BORGES EMPREENDIMENTOS IMOBILIARIOS LTDA';
+  }
+  return empresa;
+}
+
 type DiscountHistoryLogEntry = {
   createdAt?: string;
   requestId?: string;
@@ -748,48 +776,206 @@ export class CredoresService {
 
   async generateCredorPdf(id: string): Promise<Buffer> {
     const credor = await this.getById(id);
-    const doc = new PDFDocument({ margin: 40 });
+    const doc = new PDFDocument({
+      size: 'A4',
+      margin: 40,
+      bufferPages: true,
+      autoFirstPage: true,
+    });
     const chunks: Buffer[] = [];
 
     doc.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
 
-    doc.fontSize(18).text('Relatorio Completo de Credor');
-    doc.moveDown();
-    doc.fontSize(12).text(`Nome: ${credor.nomeExibivel}`);
-    doc.text(`Email: ${credor.email ?? '-'}`);
-    doc.text(`Periodo: ${credor.periodo ?? '-'}`);
-    doc.text(`Grupo: ${credor.grupo?.nome ?? '-'}`);
-    doc.text(`Total: ${Number(credor.resumo.total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-    doc.text(`Media: ${Number(credor.resumo.media).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`);
-    doc.moveDown();
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const margin = 40;
+    const contentWidth = pageWidth - margin * 2; // ~515
 
-    doc.fontSize(14).text('Historico PGC');
-    for (const h of credor.historicos) {
-      doc.fontSize(10).text(`- ${h.numero_pgc ?? 'SEM_PGC'} | ${h.periodo ?? '-'} | ${h.evento}`);
-    }
+    const fmtBrl = (num: number) =>
+      `R$ ${Number(num || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    doc.moveDown();
-    doc.fontSize(14).text('Rendimentos');
-    for (const r of credor.rendimentos) {
-      doc
-        .fontSize(10)
-        .text(
-          `- ${r.numero_pgc ?? 'SEM_PGC'} | ${r.referencia} | ${Number(r.valor).toLocaleString('pt-BR', {
-            minimumFractionDigits: 2,
-          })}`,
-        );
-    }
-
-    doc.moveDown();
-    doc.fontSize(14).text('Descontos e Abatimentos (Central de Descontos)');
-    if (credor.descontos_historico && credor.descontos_historico.length > 0) {
-      for (const d of credor.descontos_historico) {
-        doc.fontSize(10).text(
-          `- PGC ${d.pgc} | ${d.empresa}: Total R$ ${Number(d.desconto_total).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Aplicado R$ ${Number(d.desconto_aplicado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | Saldo Restante R$ ${Number(d.restante_proximo_pgc).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
-        );
+    const checkPageBreak = (neededHeight: number) => {
+      if (doc.y + neededHeight > pageHeight - margin - 30) {
+        doc.addPage();
+        return true;
       }
+      return false;
+    };
+
+    // Header Card / Top section
+    doc.fillColor('#1a1a1a').font('Helvetica-Bold').fontSize(20).text('Relatório Completo de Credor', margin, 40);
+    doc.moveDown(0.3);
+
+    const infoTop = doc.y;
+    const colW = contentWidth / 2;
+
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#334155');
+    doc.text('Nome: ', margin, infoTop, { continued: true });
+    doc.font('Helvetica').fillColor('#555555').text(credor.nomeExibivel);
+
+    doc.font('Helvetica-Bold').fillColor('#334155');
+    doc.text('E-mail: ', margin, doc.y + 4, { continued: true });
+    doc.font('Helvetica').fillColor('#555555').text(credor.email ?? '-');
+
+    const leftEndY = doc.y;
+
+    doc.font('Helvetica-Bold').fillColor('#334155');
+    doc.text('Período: ', margin + colW, infoTop, { continued: true });
+    doc.font('Helvetica').fillColor('#555555').text(credor.periodo ?? '-');
+
+    doc.font('Helvetica-Bold').fillColor('#334155');
+    doc.text('Grupo: ', margin + colW, infoTop + 16, { continued: true });
+    doc.font('Helvetica').fillColor('#555555').text(credor.grupo?.nome ?? '-');
+
+    const headerBottomY = Math.max(leftEndY, doc.y) + 12;
+
+    // Divider line
+    doc.strokeColor('#eaeaea').lineWidth(1.5).moveTo(margin, headerBottomY).lineTo(margin + contentWidth, headerBottomY).stroke();
+
+    // Metrics Cards
+    const cardY = headerBottomY + 16;
+    const cardGap = 16;
+    const cardW = (contentWidth - cardGap) / 2;
+    const cardH = 58;
+
+    // Card 1: Total Acumulado
+    doc.roundedRect(margin, cardY, cardW, cardH, 6).fillAndStroke('#f8fafc', '#e2e8f0');
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#64748b').text('TOTAL ACUMULADO', margin + 14, cardY + 12);
+    doc.font('Helvetica-Bold').fontSize(16).fillColor('#0f172a').text(fmtBrl(Number(credor.resumo.total)), margin + 14, cardY + 28);
+
+    // Card 2: Média por Período
+    doc.roundedRect(margin + cardW + cardGap, cardY, cardW, cardH, 6).fillAndStroke('#f8fafc', '#e2e8f0');
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#64748b').text('MÉDIA POR PERÍODO', margin + cardW + cardGap + 14, cardY + 12);
+    doc.font('Helvetica-Bold').fontSize(16).fillColor('#0f172a').text(fmtBrl(Number(credor.resumo.media)), margin + cardW + cardGap + 14, cardY + 28);
+
+    doc.y = cardY + cardH + 24;
+
+    // Helper for Section Titles
+    const drawSectionTitle = (title: string) => {
+      checkPageBreak(45);
+      const curY = doc.y;
+      // Blue accent bar
+      doc.rect(margin, curY, 4, 16).fill('#3b82f6');
+      doc.font('Helvetica-Bold').fontSize(14).fillColor('#1e293b').text(title, margin + 12, curY + 1);
+      doc.y = curY + 24;
+    };
+
+    // Table 1: Histórico e Rendimentos
+    drawSectionTitle('Histórico e Rendimentos');
+
+    const rendimentoCols = [
+      { header: 'PGC', width: 60, align: 'left' as const },
+      { header: 'Período', width: 140, align: 'left' as const },
+      { header: 'Status / Evento', width: 175, align: 'left' as const },
+      { header: 'Rendimento (R$)', width: 140, align: 'right' as const },
+    ];
+
+    const drawTableHeader = (cols: typeof rendimentoCols) => {
+      const curY = doc.y;
+      doc.rect(margin, curY, contentWidth, 22).fill('#f8fafc');
+      doc.strokeColor('#e2e8f0').lineWidth(1).moveTo(margin, curY + 22).lineTo(margin + contentWidth, curY + 22).stroke();
+
+      let x = margin + 8;
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#475569');
+      for (const col of cols) {
+        doc.text(col.header, x, curY + 6, { width: col.width - 16, align: col.align });
+        x += col.width;
+      }
+      doc.y = curY + 24;
+    };
+
+    drawTableHeader(rendimentoCols);
+
+    // Merge Rendimentos with Historicos by PGC
+    const historicoMap = new Map<string, string>();
+    for (const h of credor.historicos) {
+      if (h.numero_pgc && !historicoMap.has(String(h.numero_pgc))) {
+        historicoMap.set(String(h.numero_pgc), h.evento === 'PROCESSAMENTO_JOB' ? 'Processamento Job' : (h.evento || '-'));
+      }
+    }
+
+    const sortedRendimentos = [...credor.rendimentos].sort((a, b) => {
+      const aNum = Number(String(a.numero_pgc ?? '').replace(/\D/g, '')) || 0;
+      const bNum = Number(String(b.numero_pgc ?? '').replace(/\D/g, '')) || 0;
+      return bNum - aNum;
+    });
+
+    if (sortedRendimentos.length === 0) {
+      doc.font('Helvetica').fontSize(10).fillColor('#64748b').text('Nenhum rendimento registrado.', margin + 8, doc.y + 6);
+      doc.y += 20;
     } else {
-      doc.fontSize(10).text('- Nenhum desconto registrado.');
+      for (const r of sortedRendimentos) {
+        checkPageBreak(24);
+        const rowY = doc.y;
+        const pgcStr = r.numero_pgc ? String(r.numero_pgc) : '-';
+        const statusStr = historicoMap.get(pgcStr) || 'Processamento Job';
+        const valStr = fmtBrl(Number(r.valor));
+
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(pgcStr, margin + 8, rowY + 5, { width: 44 });
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(r.referencia || '-', margin + 68, rowY + 5, { width: 124 });
+        doc.font('Helvetica').fontSize(9).fillColor('#64748b').text(statusStr, margin + 208, rowY + 5, { width: 159 });
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(valStr, margin + 383, rowY + 5, { width: 124, align: 'right' });
+
+        doc.strokeColor('#f1f5f9').lineWidth(1).moveTo(margin, rowY + 22).lineTo(margin + contentWidth, rowY + 22).stroke();
+        doc.y = rowY + 23;
+      }
+    }
+
+    doc.y += 16;
+
+    // Table 2: Central de Descontos e Abatimentos
+    drawSectionTitle('Central de Descontos e Abatimentos');
+
+    const descCols = [
+      { header: 'PGC', width: 50, align: 'left' as const },
+      { header: 'Empresa / Parceiro', width: 195, align: 'left' as const },
+      { header: 'Total', width: 90, align: 'right' as const },
+      { header: 'Aplicado', width: 85, align: 'right' as const },
+      { header: 'Saldo Restante', width: 95, align: 'right' as const },
+    ];
+
+    drawTableHeader(descCols);
+
+    const sortedDescontos = [...(credor.descontos_historico || [])].sort((a, b) => {
+      const aNum = Number(String(a.pgc ?? '').replace(/\D/g, '')) || 0;
+      const bNum = Number(String(b.pgc ?? '').replace(/\D/g, '')) || 0;
+      return bNum - aNum;
+    });
+
+    if (sortedDescontos.length === 0) {
+      doc.font('Helvetica').fontSize(10).fillColor('#64748b').text('Nenhum desconto registrado.', margin + 8, doc.y + 6);
+      doc.y += 20;
+    } else {
+      for (const d of sortedDescontos) {
+        checkPageBreak(26);
+        const rowY = doc.y;
+        const pgcStr = String(d.pgc || '-');
+        const empNome = formatEmpresaNome(d.empresa);
+        const totStr = fmtBrl(Number(d.desconto_total));
+        const aplStr = fmtBrl(Number(d.desconto_aplicado));
+        const resStr = fmtBrl(Number(d.restante_proximo_pgc));
+
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(pgcStr, margin + 8, rowY + 5, { width: 34 });
+        doc.font('Helvetica').fontSize(8.5).fillColor('#334155').text(empNome, margin + 58, rowY + 5, { width: 179, height: 18, ellipsis: true });
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(totStr, margin + 253, rowY + 5, { width: 74, align: 'right' });
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(aplStr, margin + 343, rowY + 5, { width: 69, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(resStr, margin + 428, rowY + 5, { width: 79, align: 'right' });
+
+        doc.strokeColor('#f1f5f9').lineWidth(1).moveTo(margin, rowY + 22).lineTo(margin + contentWidth, rowY + 22).stroke();
+        doc.y = rowY + 23;
+      }
+    }
+
+    // Footer with Page Numbers
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i);
+      doc.font('Helvetica').fontSize(8).fillColor('#94a3b8').text(
+        `PGC Sistema Financeiro • Página ${i + 1} de ${range.count}`,
+        margin,
+        pageHeight - 25,
+        { align: 'center', width: contentWidth }
+      );
     }
 
     doc.end();
