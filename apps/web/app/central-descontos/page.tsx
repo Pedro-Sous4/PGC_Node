@@ -2,7 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { getCentralDescontos, updateCredorHistorico, exportCredorPdfUrl, getEmailTemplate, enviarEmails } from '../../lib/api';
+import {
+  getCentralDescontos,
+  updateCredorHistorico,
+  downloadCredorPdf,
+  getEmailTemplate,
+  enviarEmails,
+} from '../../lib/api';
 import { DashboardShell } from '../components/dashboard-shell';
 import { SectionCard, DataTable, ActionButton, StatusBadge } from '../components/ui';
 import Link from 'next/link';
@@ -41,6 +47,7 @@ export default function CentralDescontosPage() {
   const [nomeFilter, setNomeFilter] = useState('');
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedRow, setSelectedRow] = useState<any>(null);
+  const [downloadingPdfId, setDownloadingPdfId] = useState<string | null>(null);
 
   // Email Preview Modal state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -55,6 +62,7 @@ export default function CentralDescontosPage() {
   });
 
   // Edit form state
+  const [editMinimoGarantido, setEditMinimoGarantido] = useState(0);
   const [editCarryover, setEditCarryover] = useState(0);
   const [editDescontoTotal, setEditDescontoTotal] = useState(0);
   const [editDescontoAplicado, setEditDescontoAplicado] = useState(0);
@@ -128,6 +136,7 @@ export default function CentralDescontosPage() {
 
   const openEditModal = (row: any) => {
     setSelectedRow(row);
+    setEditMinimoGarantido(row.minimoGarantido ?? 0);
     setEditCarryover(row.carryoverAnterior);
     setEditDescontoTotal(row.descontoTotal);
     setEditDescontoAplicado(row.descontoAplicado);
@@ -141,11 +150,23 @@ export default function CentralDescontosPage() {
     setSelectedRow(null);
   };
 
+  const handleDownloadPdf = async (row: any) => {
+    setDownloadingPdfId(row.credorId);
+    try {
+      await downloadCredorPdf(row.credorId, `${row.credorNome} - PGC ${row.numero_pgc}.pdf`);
+    } catch (err: any) {
+      alert(`Falha ao baixar PDF: ${err.message}`);
+    } finally {
+      setDownloadingPdfId(null);
+    }
+  };
+
   const updateMutation = useMutation({
     mutationFn: async () => {
       if (!selectedRow) return;
       await updateCredorHistorico(selectedRow.credorId, selectedRow.numero_pgc, {
         empresa: selectedRow.empresa,
+        minimoGarantido: editMinimoGarantido,
         carryoverAnterior: editCarryover,
         descontoTotal: editDescontoTotal,
         descontoAplicado: editDescontoAplicado,
@@ -171,7 +192,7 @@ export default function CentralDescontosPage() {
     <DashboardShell
       activeNav="credores"
       title="Central de Descontos"
-      subtitle="Gerencie os descontos de todos os credores em um só lugar."
+      subtitle="Gerencie os descontos e mínimos garantidos de todos os credores em um só lugar."
     >
       <SectionCard title="Filtros" subtitle="Filtrar descontos">
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
@@ -209,7 +230,7 @@ export default function CentralDescontosPage() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Descontos" subtitle="Lista de eventos financeiros" className="mt-16">
+      <SectionCard title="Descontos e Mínimos Garantidos" subtitle="Lista de eventos financeiros consolidados" className="mt-16">
         {isLoading ? (
           <p>Carregando...</p>
         ) : (
@@ -219,6 +240,7 @@ export default function CentralDescontosPage() {
                 <th>Credor</th>
                 <th>PGC</th>
                 <th>Empresa</th>
+                <th>Mínimo Garantido</th>
                 <th>Carryover Anterior</th>
                 <th>Desconto Total</th>
                 <th>Aplicado</th>
@@ -232,6 +254,7 @@ export default function CentralDescontosPage() {
                   <td><strong>{row.credorNome}</strong></td>
                   <td><span className="chip secondary">PGC {row.numero_pgc}</span></td>
                   <td>{formatEmpresaNome(row.empresa)}</td>
+                  <td>{row.minimoGarantido > 0 ? `R$ ${row.minimoGarantido.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '-'}</td>
                   <td>R$ {row.carryoverAnterior.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                   <td>R$ {row.descontoTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
                   <td>R$ {row.descontoAplicado.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
@@ -248,19 +271,19 @@ export default function CentralDescontosPage() {
                         onClick={() => openEmailModal(row)}
                         label="E-mail"
                       />
-                      <a href={exportCredorPdfUrl(row.credorId)} target="_blank" rel="noreferrer">
-                        <ActionButton
-                          variant="secondary"
-                          label="PDF Emissão"
-                        />
-                      </a>
+                      <ActionButton
+                        variant="secondary"
+                        onClick={() => handleDownloadPdf(row)}
+                        label={downloadingPdfId === row.credorId ? 'Baixando...' : 'PDF Emissão'}
+                        disabled={downloadingPdfId === row.credorId}
+                      />
                     </div>
                   </td>
                 </tr>
               ))}
               {data?.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ textAlign: 'center' }}>Nenhum desconto encontrado.</td>
+                  <td colSpan={9} style={{ textAlign: 'center' }}>Nenhum registro encontrado.</td>
                 </tr>
               )}
             </tbody>
@@ -309,6 +332,15 @@ export default function CentralDescontosPage() {
             <h3>Editar Histórico de Desconto</h3>
             <p><strong>Credor:</strong> {selectedRow.credorNome} | <strong>PGC:</strong> {selectedRow.numero_pgc} | <strong>Empresa:</strong> {formatEmpresaNome(selectedRow.empresa)}</p>
             <form onSubmit={handleUpdate} className="grid" style={{ gridTemplateColumns: '1fr', gap: 12, marginTop: 16 }}>
+              <label>
+                Mínimo Garantido (R$)
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editMinimoGarantido}
+                  onChange={e => setEditMinimoGarantido(Number(e.target.value))}
+                />
+              </label>
               <label>
                 Carryover Anterior
                 <input type="number" step="0.01" value={editCarryover} onChange={e => setEditCarryover(Number(e.target.value))} />

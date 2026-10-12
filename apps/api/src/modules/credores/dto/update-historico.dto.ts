@@ -28,4 +28,10 @@ export class UpdateHistoricoDto {
   @IsNumber()
   @Min(0)
   restanteProximoPgc?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minimoGarantido?: number;
 }
+

@@ -726,6 +726,23 @@ export async function lgmResolveError(
   return res.json();
 }
 
+export async function downloadCredorPdf(id: string, fileName?: string): Promise<void> {
+  const res = await fetchWithAuth(exportCredorPdfUrl(id));
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || 'Falha ao baixar PDF do credor');
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName || `credor-${id}-relatorio.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  window.URL.revokeObjectURL(url);
+}
+
 export async function getCentralDescontos(params: { numero_pgc?: string; empresa?: string; nome?: string }) {
   const query = new URLSearchParams();
   if (params.numero_pgc) query.set('numero_pgc', params.numero_pgc);
@@ -739,6 +756,7 @@ export async function getCentralDescontos(params: { numero_pgc?: string; empresa
     credorNome: string;
     numero_pgc: string;
     empresa: string;
+    minimoGarantido: number;
     carryoverAnterior: number;
     descontoTotal: number;
     descontoAplicado: number;
@@ -751,6 +769,7 @@ export async function updateCredorHistorico(
   pgc: string,
   data: {
     empresa?: string;
+    minimoGarantido?: number;
     carryoverAnterior?: number;
     descontoTotal?: number;
     descontoAplicado?: number;

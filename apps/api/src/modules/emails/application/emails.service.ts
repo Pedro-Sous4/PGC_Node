@@ -684,7 +684,52 @@ export class EmailsService {
     pgcDir: string | null,
     credorNome: string,
     numeroPgc: string,
+    credorId?: string,
   ): Promise<MinimoInfo> {
+    const cleanTargetNumero = String(numeroPgc ?? '').replace(/\D/g, '');
+
+    // 0. PRIORIDADE MÁXIMA: Ajustes manuais/definidos de Mínimo Garantido no banco
+    if (credorId) {
+      try {
+        const eventosMinimo = await this.prisma.eventoFinanceiro.findMany({
+          where: {
+            credorId,
+            tipo: 'MINIMO_GARANTIDO',
+          },
+          orderBy: { created_at: 'desc' },
+        });
+
+        const eventoMinimo = eventosMinimo.find((e) => {
+          const ePgc = String(e.numero_pgc ?? '').replace(/\D/g, '');
+          return ePgc === cleanTargetNumero || e.numero_pgc === numeroPgc;
+        });
+
+        if (eventoMinimo && Number(eventoMinimo.valor) > 0) {
+          const valNum = Number(eventoMinimo.valor);
+          const empresa = eventoMinimo.empresa || '-';
+          const empresaMap = pgcDir ? await this.loadEmpresaCnpjMap(pgcDir) : new Map<string, string>();
+          const cnpj = empresaMap.get(empresa.toUpperCase()) || '-';
+
+          return {
+            valor: formatCurrencyBr(valNum),
+            empresa,
+            cnpj,
+            descricao: 'Mínimo garantido',
+            detalhes: [
+              {
+                valor: formatCurrencyBr(valNum),
+                empresa,
+                cnpj,
+                descricao: 'Mínimo garantido',
+              },
+            ],
+          };
+        }
+      } catch (err) {
+        // Fallback para arquivo se houver erro
+      }
+    }
+
     if (!pgcDir) {
       return { valor: '-', empresa: '-', cnpj: '-' };
     }
@@ -1099,7 +1144,7 @@ export class EmailsService {
         });
 
         const isSports = String(credor.grupo?.nome ?? '').toUpperCase() === 'SPORTS';
-        const minimo = await this.loadMinimoInfo(pgcDir, credor.nomeExibivel, numeroPgc);
+        const minimo = await this.loadMinimoInfo(pgcDir, credor.nomeExibivel, numeroPgc, credor.id);
         const descontosLines = await this.loadDescontosInfo(
           pgcDir,
           credor.nomeExibivel,

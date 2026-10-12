@@ -897,6 +897,32 @@ export class CredoresService {
         },
       });
 
+      // 2.1 Se informado minimoGarantido, persiste o evento MINIMO_GARANTIDO
+      if (dto.minimoGarantido !== undefined) {
+        await tx.eventoFinanceiro.deleteMany({
+          where: {
+            credorId: id,
+            numero_pgc: pgc,
+            tipo: 'MINIMO_GARANTIDO',
+          },
+        });
+
+        if (Number(dto.minimoGarantido) > 0) {
+          await tx.eventoFinanceiro.create({
+            data: {
+              credorId: id,
+              tipo: 'MINIMO_GARANTIDO',
+              valor: new Prisma.Decimal(dto.minimoGarantido),
+              saldoAnterior: new Prisma.Decimal(0),
+              saldoPosterior: new Prisma.Decimal(dto.minimoGarantido),
+              empresa,
+              numero_pgc: pgc,
+              observacao: `Mínimo Garantido ajustado manualmente para R$ ${dto.minimoGarantido}`,
+            },
+          });
+        }
+      }
+
       // 3. Cascata: Atualiza eventos subsequentes se não tiverem ajustes manuais próprios
       const pgcNumTarget = Number(cleanPgc);
 
@@ -971,7 +997,13 @@ export class CredoresService {
           }
         }
       },
-      select: { id: true, nomeExibivel: true },
+      select: { 
+        id: true, 
+        nomeExibivel: true,
+        eventosFinanceiros: {
+          where: { tipo: 'MINIMO_GARANTIDO' }
+        }
+      },
     });
 
     const results = [];
@@ -981,11 +1013,18 @@ export class CredoresService {
         if (query.numero_pgc && h.pgc !== query.numero_pgc) continue;
         if (query.empresa && !h.empresa.toLowerCase().includes(query.empresa.toLowerCase())) continue;
         
+        // Localiza se há Mínimo Garantido salvo para esse credor no PGC
+        const minimoEvento = credor.eventosFinanceiros?.find(
+          (e) => String(e.numero_pgc).replace(/\D/g, '') === String(h.pgc).replace(/\D/g, '')
+        );
+        const minimoGarantido = minimoEvento ? Number(minimoEvento.valor) : 0;
+
         results.push({
           credorId: credor.id,
           credorNome: credor.nomeExibivel,
           numero_pgc: h.pgc,
           empresa: h.empresa,
+          minimoGarantido,
           carryoverAnterior: h.carryover_anterior,
           descontoTotal: h.desconto_total,
           descontoAplicado: h.desconto_aplicado,
