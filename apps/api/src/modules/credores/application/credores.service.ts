@@ -959,7 +959,6 @@ export class CredoresService {
 
     return this.getById(id);
   }
-
   async listCentralDescontos(query: { numero_pgc?: string; empresa?: string; nome?: string }) {
     const credores = await this.prisma.credor.findMany({
       where: {

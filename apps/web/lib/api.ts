@@ -746,7 +746,6 @@ export async function getCentralDescontos(params: { numero_pgc?: string; empresa
     eventoId: string;
   }>>;
 }
-
 export async function updateCredorHistorico(
   credorId: string,
   pgc: string,
