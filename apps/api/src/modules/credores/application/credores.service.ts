@@ -142,6 +142,51 @@ function formatEmpresaNome(empresa: string): string {
   return empresa;
 }
 
+const MONTH_NAME_MAP: Record<string, string> = {
+  'janeiro': '01', 'jan': '01',
+  'fevereiro': '02', 'fev': '02',
+  'marco': '03', 'março': '03', 'mar': '03',
+  'abril': '04', 'abr': '04',
+  'maio': '05', 'mai': '05',
+  'junho': '06', 'jun': '06',
+  'julho': '07', 'jul': '07',
+  'agosto': '08', 'ago': '08',
+  'setembro': '09', 'set': '09',
+  'outubro': '10', 'out': '10',
+  'novembro': '11', 'nov': '11',
+  'dezembro': '12', 'dez': '12',
+};
+
+function formatPeriodoDisplay(raw?: string | null): string {
+  if (!raw) return '-';
+  const clean = String(raw).trim();
+  if (!clean || clean === '-') return '-';
+
+  // Verifica padrão 09/2026, 9/2026, 09-2026
+  const slashMatch = clean.match(/^(\d{1,2})[\/\-](\d{4})$/);
+  if (slashMatch) {
+    return `${slashMatch[1].padStart(2, '0')}/${slashMatch[2]}`;
+  }
+
+  // Normaliza texto removendo acentos e pontuação para pegar "agosto.2026", "novembro,2025", etc.
+  const norm = clean
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  const yearMatch = norm.match(/\b(20\d{2})\b/);
+  if (!yearMatch) return clean;
+  const year = yearMatch[1];
+
+  for (const [name, mm] of Object.entries(MONTH_NAME_MAP)) {
+    if (norm.includes(name)) {
+      return `${mm}/${year}`;
+    }
+  }
+
+  return clean;
+}
+
 type DiscountHistoryLogEntry = {
   createdAt?: string;
   requestId?: string;
@@ -821,7 +866,7 @@ export class CredoresService {
 
     doc.font('Helvetica-Bold').fillColor('#334155');
     doc.text('Período: ', margin + colW, infoTop, { continued: true });
-    doc.font('Helvetica').fillColor('#555555').text(credor.periodo ?? '-');
+    doc.font('Helvetica').fillColor('#555555').text(formatPeriodoDisplay(credor.periodo));
 
     doc.font('Helvetica-Bold').fillColor('#334155');
     doc.text('Grupo: ', margin + colW, infoTop + 16, { continued: true });
@@ -912,7 +957,7 @@ export class CredoresService {
         const valStr = fmtBrl(Number(r.valor));
 
         doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(pgcStr, margin + 8, rowY + 5, { width: 44 });
-        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(r.referencia || '-', margin + 68, rowY + 5, { width: 124 });
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(formatPeriodoDisplay(r.referencia), margin + 68, rowY + 5, { width: 124 });
         doc.font('Helvetica').fontSize(9).fillColor('#64748b').text(statusStr, margin + 208, rowY + 5, { width: 159 });
         doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(valStr, margin + 383, rowY + 5, { width: 124, align: 'right' });
 
