@@ -22,6 +22,7 @@ import { BatchActionDto } from './dto/batch-action.dto';
 import { CreateCredorDto } from './dto/create-credor.dto';
 import { ListCredoresQueryDto } from './dto/list-credores-query.dto';
 import { UpdateCredorDto } from './dto/update-credor.dto';
+import { UpdateHistoricoDto } from './dto/update-historico.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -49,6 +50,12 @@ export class CredoresController {
     return this.service.create(dto);
   }
 
+  @Get('central/descontos')
+  @Roles(Role.ADMIN, Role.OPERADOR, Role.CONSULTA)
+  listCentralDescontos(@Query('numero_pgc') numero_pgc?: string, @Query('empresa') empresa?: string, @Query('nome') nome?: string) {
+    return this.service.listCentralDescontos({ numero_pgc, empresa, nome });
+  }
+
   @Get(':id')
   @Roles(Role.ADMIN, Role.OPERADOR, Role.CONSULTA)
   getById(@Param('id') id: string) {
@@ -65,6 +72,16 @@ export class CredoresController {
   @Roles(Role.ADMIN, Role.OPERADOR)
   remove(@Param('id') id: string) {
     return this.service.remove(id);
+  }
+
+  @Put(':id/historico/:pgc')
+  @Roles(Role.ADMIN, Role.OPERADOR)
+  updateHistorico(
+    @Param('id') id: string,
+    @Param('pgc') pgc: string,
+    @Body() dto: UpdateHistoricoDto,
+  ) {
+    return this.service.updateHistorico(id, pgc, dto);
   }
 
   @Post('batch/marcar-enviado')

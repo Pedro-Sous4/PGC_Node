@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 
 export class SendEmailsDto {
   @IsOptional()
@@ -31,4 +31,8 @@ export class SendEmailsDto {
   @IsOptional()
   @IsString()
   custom_texto_descontos?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  apenasNaoEnviados?: boolean;
 }

@@ -31,6 +31,7 @@ interface DashboardShellProps {
     | 'forms'
     | 'jobs'
     | 'credores'
+    | 'central-descontos'
     | 'upload-emails'
     | 'enviar-emails'
     | 'configuracoes'
@@ -44,6 +45,7 @@ interface DashboardShellProps {
 const navItems = [
   { key: 'dashboard', label: 'Dashboard', href: '/', icon: LayoutDashboard },
   { key: 'credores', label: 'Credores', href: '/credores', icon: Users },
+  { key: 'central-descontos', label: 'Central de Descontos', href: '/central-descontos', icon: Settings },
   { key: 'importacao', label: 'Importação de Credores', href: '/upload-emails', icon: Upload },
   { key: 'emails', label: 'Enviar PGC', href: '/enviar-emails', icon: Mail },
   { key: 'arquivos', label: 'Arquivos', href: '/arquivos', icon: FolderOpen },

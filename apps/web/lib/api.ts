@@ -119,6 +119,7 @@ export interface SystemSettings {
   };
   empresasCnpj: Array<{
     empresa: string;
+    apelido?: string;
     cnpj: string;
   }>;
   audit: {
@@ -469,6 +470,7 @@ export async function enviarEmails(payload: {
   custom_mensagem_principal?: string;
   custom_texto_minimo?: string;
   custom_texto_descontos?: string;
+  apenasNaoEnviados?: boolean;
 }): Promise<EmailSendResult> {
   const res = await fetchWithAuth(`${API}/emails/enviar`, {
     method: 'POST',
@@ -488,6 +490,7 @@ export async function iniciarEnvioEmails(payload: {
   custom_mensagem_principal?: string;
   custom_texto_minimo?: string;
   custom_texto_descontos?: string;
+  apenasNaoEnviados?: boolean;
 }): Promise<{ dispatchId: string }> {
   const res = await fetchWithAuth(`${API}/emails/enviar/async`, {
     method: 'POST',
@@ -723,3 +726,60 @@ export async function lgmResolveError(
   return res.json();
 }
 
+export async function getCentralDescontos(params: { numero_pgc?: string; empresa?: string; nome?: string }) {
+  const query = new URLSearchParams();
+  if (params.numero_pgc) query.set('numero_pgc', params.numero_pgc);
+  if (params.empresa) query.set('empresa', params.empresa);
+  if (params.nome) query.set('nome', params.nome);
+
+  const res = await fetchWithAuth(`${API}/credores/central/descontos?${query.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Falha ao listar central de descontos');
+  return res.json() as Promise<Array<{
+    credorId: string;
+    credorNome: string;
+    numero_pgc: string;
+    empresa: string;
+    carryoverAnterior: number;
+    descontoTotal: number;
+    descontoAplicado: number;
+    restanteProximoPgc: number;
+    eventoId: string;
+  }>>;
+}
+
+export async function updateCredorHistorico(
+  credorId: string,
+  pgc: string,
+  data: {
+    empresa?: string;
+    carryoverAnterior?: number;
+    descontoTotal?: number;
+    descontoAplicado?: number;
+    restanteProximoPgc?: number;
+    motivo?: string;
+  },
+) {
+  const res = await fetchWithAuth(`${API}/credores/${credorId}/historico/${encodeURIComponent(pgc)}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || 'Falha ao atualizar histórico do credor');
+  }
+  return res.json();
+}
+
+export async function reprocessCredor(requestId: string, credorSlug: string) {
+  const res = await fetchWithAuth(`${API}/jobs/${requestId}/reprocess`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ credores: [credorSlug] }),
+  });
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => '');
+    throw new Error(errorText || 'Falha ao reprocessar credor');
+  }
+  return res.json();
+}

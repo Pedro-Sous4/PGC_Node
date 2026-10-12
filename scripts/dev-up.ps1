@@ -72,7 +72,7 @@ function Wait-ForHttp {
   param(
     [string]$Name,
     [string]$Url,
-    [int]$MaxAttempts = 25,
+    [int]$MaxAttempts = 60,
     [int]$DelaySeconds = 2
   )
 

@@ -94,6 +94,7 @@ type MinimoRecord = {
   desconto: number;
   valorBruto: number;
   total: number;
+  descricao?: string;
 };
 
 type DiscountLedgerEntry = {
@@ -436,9 +437,9 @@ function applyDiscountsForCredor(
   }
 
   const totalAvailableFromMinimo = Array.from(availableByResolvedName.values()).reduce((acc, value) => acc + value, 0);
-  if (totalAvailableFromMinimo <= 0) {
-    const empresaColumns = baseHeaders.filter((header) => /empresa/.test(normalizeText(header)));
-    const valorColumns = baseHeaders.filter((header) => /valor original|^valor$|valor|total geral/.test(normalizeText(header)));
+  
+  const empresaColumns = baseHeaders.filter((header) => /empresa/.test(normalizeText(header)));
+  const valorColumns = baseHeaders.filter((header) => /valor original|^valor$|valor|total geral/.test(normalizeText(header)));
 
     if (empresaColumns.length > 0 && valorColumns.length > 0) {
       for (const row of baseRows) {
@@ -455,10 +456,14 @@ function applyDiscountsForCredor(
 
         resolvedCompanies.add(resolvedName);
         identityByResolvedName.set(resolvedName, identity);
-        availableByResolvedName.set(resolvedName, Number(((availableByResolvedName.get(resolvedName) ?? 0) + valor).toFixed(2)));
+        
+        // Adiciona saldo da Base apenas se a empresa não possui saldo positivo vindo do Mínimo
+        const saldoAtual = availableByResolvedName.get(resolvedName) ?? 0;
+        if (saldoAtual <= 0) {
+          availableByResolvedName.set(resolvedName, Number((saldoAtual + valor).toFixed(2)));
+        }
       }
     }
-  }
 
   for (const key of historyState.keys()) {
     if (!key.startsWith(`${credorSlug}::`)) continue;
@@ -984,19 +989,9 @@ function deriveMinimoRecordsFromGoldenFixedLayout(
     const credor = toCredorDisplayName(credorRaw);
     if (!credor || !credor.includes(' ')) continue;
 
-    // Busca o valor do mínimo
-    let minimo = colMinimo !== -1 ? parseNumber(row[colMinimo]) : 0;
-    if (minimo <= 0) {
-      // Escaneia a linha em busca de um valor monetário razoável
-      for (let idx = 10; idx < row.length; idx++) {
-        if (idx === colCredor || idx === 31 || idx === 32) continue;
-        const val = parseNumber(row[idx]);
-        if (val > 0 && val < 50000) {
-          minimo = val;
-          break;
-        }
-      }
-    }
+    // Busca o valor do mínimo estritamente na coluna determinada (ou fallback para índice 40 / coluna AO)
+    const colIndex = colMinimo !== -1 ? colMinimo : 40;
+    const minimo = parseNumber(row[colIndex]);
 
     if (minimo <= 0) continue;
 
@@ -1013,6 +1008,7 @@ function deriveMinimoRecordsFromGoldenFixedLayout(
       cnpj: cnpj || cnpjFromBase || cnpjByEmpresa || '',
       minimo,
       desconto: 0,
+      valorBruto: 0,
       total: minimo,
     });
   }

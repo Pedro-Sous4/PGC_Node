@@ -36,6 +36,7 @@ export default function EnviarEmailsPage() {
   const [dispatchId, setDispatchId] = useState<string | null>(null);
   const [progress, setProgress] = useState<EmailSendProgress | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [statusFiltro, setStatusFiltro] = useState<'todos' | 'nao_enviados'>('todos');
   const [sendError, setSendError] = useState<string | null>(null);
 
   const statCardStyle = {
@@ -144,6 +145,7 @@ export default function EnviarEmailsPage() {
             numero_pgc: numeroPgc || undefined,
             nome: credorSearch.trim() || undefined,
             take: 80,
+            enviado: statusFiltro === 'nao_enviados' ? 'false' : undefined,
           });
 
           if (!canceled) {
@@ -161,7 +163,7 @@ export default function EnviarEmailsPage() {
       canceled = true;
       clearTimeout(timeout);
     };
-  }, [escopo, grupoId, numeroPgc, credorSearch]);
+  }, [escopo, grupoId, numeroPgc, credorSearch, statusFiltro]);
 
   useEffect(() => {
     setSelectedCredorIds([]);
@@ -235,6 +237,7 @@ export default function EnviarEmailsPage() {
       custom_mensagem_principal: mensagemPrincipal,
       custom_texto_minimo: textoMinimo,
       custom_texto_descontos: textoDescontos,
+      apenasNaoEnviados: statusFiltro === 'nao_enviados',
     });
     setDispatchId(started.dispatchId);
   }
@@ -276,7 +279,15 @@ export default function EnviarEmailsPage() {
             </select>
           </label>
 
-          <div style={{ display: 'flex', alignItems: 'end' }}>
+          <label>
+            Status
+            <select value={statusFiltro} onChange={(e) => setStatusFiltro(e.target.value as 'todos' | 'nao_enviados')}>
+              <option value="todos">Todos</option>
+              <option value="nao_enviados">Não enviados</option>
+            </select>
+          </label>
+ 
+           <div style={{ display: 'flex', alignItems: 'end' }}>
             <ActionButton type="submit" label={isSending ? 'Enviando...' : 'Enviar e-mails'} icon="->" disabled={isSending} />
           </div>
         </form>
@@ -333,6 +344,12 @@ export default function EnviarEmailsPage() {
 
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <ActionButton type="button" variant="secondary" onClick={() => setSelectedCredorIds([])} label="Limpar seleção" />
+                <ActionButton
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setSelectedCredorIds(credorOptions.map((c) => c.id))}
+                  label="Selecionar todos"
+                />
               </div>
 
               <small>

@@ -9,6 +9,7 @@ import { PrismaService } from '../../../infra/prisma.service';
 import { SendEmailsDto } from '../dto/send-emails.dto';
 import { UpdateTemplateDto } from '../dto/update-template.dto';
 import { SystemSettingsService } from '../../system-settings/application/system-settings.service';
+import { CredoresService } from '../../credores/application/credores.service';
 
 type EmailTemplate = {
   mensagem_principal?: string; // legível para migração
@@ -259,6 +260,7 @@ export class EmailsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly systemSettingsService: SystemSettingsService,
+    private readonly credoresService: CredoresService,
   ) { }
 
   private createDispatchId(): string {
@@ -363,6 +365,7 @@ export class EmailsService {
   async sendBatch(dto: SendEmailsDto, dispatchId?: string): Promise<SendBatchResult> {
     const where: Prisma.CredorWhereInput = {};
     if (dto.grupoId) where.grupoId = dto.grupoId;
+    if (dto.apenasNaoEnviados) where.enviado = false;
     if (dto.escopo === 'credor') {
       if (!dto.credorIds?.length) {
         const emptyResult: SendBatchResult = {
@@ -708,9 +711,45 @@ export class EmailsService {
     credorNome: string,
     numeroPgc: string,
     requestId?: string,
+    credorId?: string,
   ): Promise<string[]> {
-    if (!pgcDir) return [];
     const normalizedCredor = normalizeCredorKey(credorNome);
+    const targetNumero = String(numeroPgc ?? '').trim();
+    const cleanTargetNumero = targetNumero.replace(/\D/g, '');
+
+    // 0. PRIORIDADE MÁXIMA: Descontos da base de dados / EventoFinanceiro (Central de Descontos)
+    if (credorId) {
+      try {
+        const rows = await this.credoresService.loadDiscountHistoryRowsForCredor(credorId);
+        const scopedRows = rows.filter((r) => {
+          const rPgc = String(r.pgc ?? '').trim();
+          const cleanRPgc = rPgc.replace(/\D/g, '');
+          return rPgc === targetNumero || (cleanTargetNumero && cleanRPgc === cleanTargetNumero);
+        });
+
+        if (scopedRows.length > 0) {
+          const dbLines: string[] = [];
+          for (const r of scopedRows) {
+            const aplicado = Number(r.desconto_aplicado ?? 0);
+            const total = Number(r.desconto_total ?? 0);
+            const valorParaExibir = aplicado > 0 ? aplicado : total;
+            if (valorParaExibir > 0 && r.empresa) {
+              const formattedLine = formatDescontoLine(r.empresa, formatCurrencyBr(valorParaExibir));
+              if (formattedLine && !dbLines.includes(formattedLine)) {
+                dbLines.push(formattedLine);
+              }
+            }
+          }
+          if (dbLines.length > 0) {
+            return dbLines;
+          }
+        }
+      } catch (err) {
+        // Fallback para arquivo se houver erro ao ler do banco
+      }
+    }
+
+    if (!pgcDir) return [];
 
     // 1. PRIORIDADE: usa o historico de descontos persistido pelo worker (contém o valor APLICADO).
     const historyFile = path.join(path.dirname(pgcDir), 'descontos-historico.json');
@@ -1066,6 +1105,7 @@ export class EmailsService {
           credor.nomeExibivel,
           numeroPgc,
           historico?.requestId,
+          credor.id,
         );
         const includeMinimo = !isSports && hasMinimoData(minimo);
         const includeDescontos = !isSports && descontosLines.length > 0;
@@ -1122,7 +1162,7 @@ export class EmailsService {
           throw new BadRequestException('Template gerou corpo de email vazio.');
         }
 
-        const subjectTemplate = systemSettings.email.assuntoPadrao || 'PGC {historico.numero_pgc} - {historico.periodo}';
+        const subjectTemplate = systemSettings.email.assuntoPadrao || 'PGC {historico.numero_pgc}';
         const subjectRaw = applyTemplate(subjectTemplate, {
           'historico.numero_pgc': numeroPgc,
           'historico.periodo': historico?.periodo ?? credor.periodo ?? '-',
