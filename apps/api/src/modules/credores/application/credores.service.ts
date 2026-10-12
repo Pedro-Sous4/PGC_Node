@@ -909,10 +909,9 @@ export class CredoresService {
     drawSectionTitle('Histórico e Rendimentos');
 
     const rendimentoCols = [
-      { header: 'PGC', width: 60, align: 'left' as const },
-      { header: 'Período', width: 140, align: 'left' as const },
-      { header: 'Status / Evento', width: 175, align: 'left' as const },
-      { header: 'Rendimento (R$)', width: 140, align: 'right' as const },
+      { header: 'PGC', width: 80, align: 'left' as const },
+      { header: 'Período', width: 235, align: 'left' as const },
+      { header: 'Rendimento (R$)', width: 200, align: 'right' as const },
     ];
 
     const drawTableHeader = (cols: typeof rendimentoCols) => {
@@ -931,14 +930,6 @@ export class CredoresService {
 
     drawTableHeader(rendimentoCols);
 
-    // Merge Rendimentos with Historicos by PGC
-    const historicoMap = new Map<string, string>();
-    for (const h of credor.historicos) {
-      if (h.numero_pgc && !historicoMap.has(String(h.numero_pgc))) {
-        historicoMap.set(String(h.numero_pgc), h.evento === 'PROCESSAMENTO_JOB' ? 'Processamento Job' : (h.evento || '-'));
-      }
-    }
-
     const sortedRendimentos = [...credor.rendimentos].sort((a, b) => {
       const aNum = Number(String(a.numero_pgc ?? '').replace(/\D/g, '')) || 0;
       const bNum = Number(String(b.numero_pgc ?? '').replace(/\D/g, '')) || 0;
@@ -953,13 +944,11 @@ export class CredoresService {
         checkPageBreak(24);
         const rowY = doc.y;
         const pgcStr = r.numero_pgc ? String(r.numero_pgc) : '-';
-        const statusStr = historicoMap.get(pgcStr) || 'Processamento Job';
         const valStr = fmtBrl(Number(r.valor));
 
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(pgcStr, margin + 8, rowY + 5, { width: 44 });
-        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(formatPeriodoDisplay(r.referencia), margin + 68, rowY + 5, { width: 124 });
-        doc.font('Helvetica').fontSize(9).fillColor('#64748b').text(statusStr, margin + 208, rowY + 5, { width: 159 });
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(valStr, margin + 383, rowY + 5, { width: 124, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(pgcStr, margin + 8, rowY + 5, { width: 64 });
+        doc.font('Helvetica').fontSize(9).fillColor('#334155').text(formatPeriodoDisplay(r.referencia), margin + 88, rowY + 5, { width: 219 });
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#0f172a').text(valStr, margin + 323, rowY + 5, { width: 184, align: 'right' });
 
         doc.strokeColor('#f1f5f9').lineWidth(1).moveTo(margin, rowY + 22).lineTo(margin + contentWidth, rowY + 22).stroke();
         doc.y = rowY + 23;
